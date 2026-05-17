@@ -61,6 +61,21 @@ interface QueuedStreamDeltas {
 
 const STREAM_DELTA_FLUSH_MS = 16
 
+// Gateway/provider failures sometimes arrive as message.complete text instead
+// of an explicit error event. Treat matches as inline assistant errors so they
+// persist like real error events and don't get erased by hydrate fallback.
+const COMPLETION_ERROR_PATTERNS = [
+  /^API call failed after \d+ retries:/i,
+  /^HTTP\s+\d{3}\b/i,
+  /^(Provider|Gateway)\s+error:/i
+]
+
+function completionErrorText(finalText: string): string | null {
+  const text = finalText.trim()
+
+  return text && COMPLETION_ERROR_PATTERNS.some(re => re.test(text)) ? text : null
+}
+
 const SUBAGENT_EVENT_TYPES = new Set([
   'subagent.spawn_requested',
   'subagent.start',
@@ -377,7 +392,12 @@ export function useMessageStream({
     ) => {
       if (!nativeSubagentSessionsRef.current.has(sessionId)) {
         for (const subagentPayload of delegateTaskPayloads(payload, phase, sourceEventType)) {
-          upsertSubagent(sessionId, subagentPayload, true, phase === 'complete' ? 'delegate.complete' : 'delegate.running')
+          upsertSubagent(
+            sessionId,
+            subagentPayload,
+            true,
+            phase === 'complete' ? 'delegate.complete' : 'delegate.running'
+          )
         }
       }
 
@@ -406,6 +426,7 @@ export function useMessageStream({
 
         const streamId = state.streamId
         const finalText = renderMediaTags(text).trim()
+        const completionError = completionErrorText(finalText)
         const normalize = (value: string) => value.replace(/\s+/g, ' ').trim()
         const dedupeReference = normalize(finalText)
 
@@ -427,10 +448,26 @@ export function useMessageStream({
           return finalText ? [...kept, assistantTextPart(finalText)] : kept
         }
 
-        const completeMessage = (message: ChatMessage): ChatMessage => ({
-          ...message,
-          parts: replaceTextPart(message.parts),
-          pending: false
+        const completeMessage = (message: ChatMessage): ChatMessage =>
+          completionError
+            ? {
+                ...message,
+                error: completionError,
+                parts: message.parts.filter(part => part.type !== 'text'),
+                pending: false
+              }
+            : {
+                ...message,
+                parts: replaceTextPart(message.parts),
+                pending: false
+              }
+
+        const newAssistantFromCompletion = (): ChatMessage => ({
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          parts: completionError ? [] : [assistantTextPart(finalText)],
+          branchGroupId: state.pendingBranchGroup ?? undefined,
+          ...(completionError && { error: completionError })
         })
 
         const prev = state.messages
@@ -453,30 +490,18 @@ export function useMessageStream({
                 messageIndex === index ? completeMessage(message) : message
               )
             } else if (finalText) {
-              nextMessages = [
-                ...prev,
-                {
-                  id: `assistant-${Date.now()}`,
-                  role: 'assistant',
-                  parts: [assistantTextPart(finalText)],
-                  branchGroupId: state.pendingBranchGroup ?? undefined
-                }
-              ]
+              nextMessages = [...prev, newAssistantFromCompletion()]
             }
           } else if (finalText) {
-            nextMessages = [
-              ...prev,
-              {
-                id: `assistant-${Date.now()}`,
-                role: 'assistant',
-                parts: [assistantTextPart(finalText)],
-                branchGroupId: state.pendingBranchGroup ?? undefined
-              }
-            ]
+            nextMessages = [...prev, newAssistantFromCompletion()]
           }
         }
 
-        shouldHydrate = !state.sawAssistantPayload || !finalText
+        const hasInlineError = nextMessages.some(m => m.role === 'assistant' && m.error && !m.hidden)
+        const lastVisible = [...nextMessages].reverse().find(m => !m.hidden)
+        const unresolvedUserTail = lastVisible?.role === 'user'
+        shouldHydrate =
+          !completionError && !hasInlineError && !unresolvedUserTail && (!state.sawAssistantPayload || !finalText)
 
         return {
           ...state,
@@ -502,6 +527,50 @@ export function useMessageStream({
       }
     },
     [activeSessionIdRef, hydrateFromStoredSession, refreshSessions, updateSessionState]
+  )
+
+  const failAssistantMessage = useCallback(
+    (sessionId: string, errorMessage: string) => {
+      updateSessionState(sessionId, state => {
+        const streamId = state.streamId ?? `assistant-error-${Date.now()}`
+        const groupId = state.pendingBranchGroup ?? undefined
+        const prev = state.messages
+        const error = errorMessage.trim() || 'Hermes reported an error'
+
+        const nextMessages = prev.some(m => m.id === streamId)
+          ? prev.map(message =>
+              message.id === streamId
+                ? {
+                    ...message,
+                    error,
+                    pending: false
+                  }
+                : message
+            )
+          : [
+              ...prev,
+              {
+                id: streamId,
+                role: 'assistant' as const,
+                parts: [],
+                error,
+                pending: false,
+                branchGroupId: groupId
+              }
+            ]
+
+        return {
+          ...state,
+          messages: nextMessages,
+          streamId: null,
+          pendingBranchGroup: null,
+          sawAssistantPayload: true,
+          awaitingResponse: false,
+          busy: false
+        }
+      })
+    },
+    [updateSessionState]
   )
 
   const handleGatewayEvent = useCallback(
@@ -738,11 +807,7 @@ export function useMessageStream({
 
         if (sessionId) {
           flushQueuedDeltas(sessionId)
-          updateSessionState(sessionId, state => ({
-            ...state,
-            awaitingResponse: false,
-            busy: false
-          }))
+          failAssistantMessage(sessionId, errorMessage)
         }
 
         if (isActiveEvent) {
@@ -755,6 +820,7 @@ export function useMessageStream({
       appendReasoningDelta,
       activeSessionIdRef,
       completeAssistantMessage,
+      failAssistantMessage,
       flushQueuedDeltas,
       queryClient,
       refreshHermesConfig,

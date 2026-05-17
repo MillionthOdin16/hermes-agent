@@ -13,10 +13,12 @@ import {
   useAuiState
 } from '@assistant-ui/react'
 import { useStore } from '@nanostores/react'
+import { IconPlayerStopFilled } from '@tabler/icons-react'
 import {
   type ClipboardEvent,
   type ComponentProps,
   type FC,
+  type FocusEvent,
   type FormEvent,
   type KeyboardEvent,
   type DragEvent as ReactDragEvent,
@@ -31,9 +33,9 @@ import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom'
 
 import { COMPOSER_DROP_ACTIVE_CLASS, COMPOSER_DROP_FADE_CLASS } from '@/app/chat/composer/drop-affordance'
 import {
+  type ComposerInsertMode,
   focusComposerInput,
   markActiveComposer,
-  type ComposerInsertMode,
   onComposerFocusRequest,
   onComposerInsertRequest
 } from '@/app/chat/composer/focus'
@@ -148,7 +150,17 @@ export const Thread: FC<{
   onCancel?: () => Promise<void> | void
   sessionId?: string | null
   sessionKey?: string | null
-}> = ({ clampToComposer = false, cwd = null, gateway = null, intro, loading, onBranchInNewChat, onCancel, sessionId = null, sessionKey }) => {
+}> = ({
+  clampToComposer = false,
+  cwd = null,
+  gateway = null,
+  intro,
+  loading,
+  onBranchInNewChat,
+  onCancel,
+  sessionId = null,
+  sessionKey
+}) => {
   const introHero = useAuiState(s => Boolean(intro) && s.thread.isEmpty)
 
   const messageComponents = useMemo(
@@ -195,7 +207,11 @@ export const Thread: FC<{
               <GroupedThreadMessages components={messageComponents} />
               {loading === 'response' && <ResponseLoadingIndicator />}
               {clampToComposer && (
-                <div aria-hidden="true" className="shrink-0" style={{ height: 'var(--thread-last-message-clearance)' }} />
+                <div
+                  aria-hidden="true"
+                  className="shrink-0"
+                  style={{ height: 'var(--thread-last-message-clearance)' }}
+                />
               )}
             </StickToBottom.Content>
           </StickToBottom>
@@ -503,7 +519,7 @@ const AssistantMessage: FC<{ onBranchInNewChat?: (messageId: string) => void }> 
         )}
         <MessagePrimitive.Error>
           <ErrorPrimitive.Root
-            className="mt-2 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+            className="mt-1.5 text-[0.78rem] leading-5 text-[color-mix(in_srgb,var(--dt-destructive)_78%,var(--ui-text-secondary))]"
             role="alert"
           >
             <ErrorPrimitive.Message />
@@ -539,7 +555,7 @@ const ResponseLoadingIndicator: FC = () => {
 
   return (
     <StatusRow data-slot="aui_response-loading" label="Hermes is loading a response">
-      <span aria-hidden="true" className="inline-block size-1.5 rounded-full bg-(--ui-orange) animate-pulse" />
+      <span aria-hidden="true" className="dither inline-block size-3 rounded-[2px] text-midground/80 animate-pulse" />
       <ActivityTimerText seconds={elapsed} />
     </StatusRow>
   )
@@ -628,7 +644,11 @@ const ThinkingDisclosure: FC<{
   }, [isPreview])
 
   return (
-    <div className="text-[length:var(--conversation-tool-font-size)] text-(--ui-text-tertiary)" data-slot="aui_thinking-disclosure" ref={enterRef}>
+    <div
+      className="text-[length:var(--conversation-tool-font-size)] text-(--ui-text-tertiary)"
+      data-slot="aui_thinking-disclosure"
+      ref={enterRef}
+    >
       <DisclosureRow onToggle={() => setUserOpen(!open)} open={open}>
         <span className="flex min-w-0 items-baseline gap-1.5">
           <span
@@ -640,7 +660,10 @@ const ThinkingDisclosure: FC<{
             Thinking
           </span>
           {pending && (
-            <ActivityTimerText className="text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)" seconds={elapsed} />
+            <ActivityTimerText
+              className="text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)"
+              seconds={elapsed}
+            />
           )}
         </span>
       </DisclosureRow>
@@ -851,13 +874,13 @@ const AssistantFooter: FC<MessageActionProps> = props => (
       className="inline-flex h-6 items-center gap-1 text-xs text-muted-foreground"
       hideWhenSingleBranch
     >
-      <BranchPickerPrimitive.Previous className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-35">
+      <BranchPickerPrimitive.Previous className="grid size-6 cursor-pointer place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-35">
         <Codicon name="chevron-left" size="0.875rem" />
       </BranchPickerPrimitive.Previous>
       <span className="tabular-nums">
         <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
       </span>
-      <BranchPickerPrimitive.Next className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-35">
+      <BranchPickerPrimitive.Next className="grid size-6 cursor-pointer place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-35">
         <Codicon name="chevron-right" size="0.875rem" />
       </BranchPickerPrimitive.Next>
     </BranchPickerPrimitive.Root>
@@ -878,7 +901,7 @@ function messageAttachmentRefs(value: unknown): string[] {
 function StickyHumanMessageContainer({ children }: { children: ReactNode }) {
   return (
     <div
-      className="group/user-message sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] min-w-0 max-w-none flex-col items-stretch gap-0 self-end overflow-visible bg-(--glass-chat-surface-background) px-4 pb-(--conversation-turn-gap) pt-2"
+      className="group/user-message sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] min-w-0 max-w-none flex-col items-stretch gap-0 self-end overflow-visible bg-(--ui-chat-surface-background) px-4 pb-(--conversation-turn-gap) pt-2"
       data-role="user"
       data-slot="aui_user-message-root"
     >
@@ -893,6 +916,12 @@ function StickyHumanMessageContainer({ children }: { children: ReactNode }) {
 // padding-right (the read-only view reserves room for the restore icon).
 const USER_BUBBLE_BASE_CLASS =
   'composer-human-message standalone-glass relative flex w-full min-w-0 max-w-full flex-col gap-1.5 overflow-hidden rounded-xl border bg-(--dt-user-bubble) px-3 py-2 text-left shadow-composer'
+
+const USER_ACTION_ICON_BUTTON_CLASS =
+  'grid cursor-pointer place-items-center rounded-md bg-transparent text-(--ui-text-secondary) transition-colors hover:bg-(--ui-control-active-background) hover:text-foreground disabled:cursor-default disabled:text-(--ui-text-quaternary) disabled:opacity-70'
+
+const USER_ACTION_ICON_SIZE = '0.6875rem'
+const StopGlyph = <IconPlayerStopFilled aria-hidden className="size-3.5 -translate-y-px" />
 
 const UserMessage: FC<{
   onCancel?: () => Promise<void> | void
@@ -925,86 +954,99 @@ const UserMessage: FC<{
   const showStop = isLatestUser && threadRunning && Boolean(onCancel)
   const showRestore = !isLatestUser && !threadRunning
 
+  const bubbleClassName = cn(
+    USER_BUBBLE_BASE_CLASS,
+    'border-(--ui-stroke-tertiary) pr-9 text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground/95 transition-colors',
+    !threadRunning && 'cursor-pointer hover:border-(--ui-stroke-secondary)'
+  )
+
+  const bubbleContent = (
+    <>
+      {attachmentRefs.length > 0 && (
+        <span className="-mx-1 flex flex-wrap gap-1 border-b border-border/45 pb-1.5">
+          <DirectiveContent text={attachmentRefs.join(' ')} />
+        </span>
+      )}
+      {hasBody && (
+        <span className="wrap-anywhere block whitespace-pre-line">
+          <MessagePrimitive.Parts components={{ Text: DirectiveText }} />
+        </span>
+      )}
+    </>
+  )
+
   return (
     <MessagePrimitive.Root asChild>
       <StickyHumanMessageContainer>
-      <ActionBarPrimitive.Root className="relative w-full max-w-full" data-slot="aui_user-bubble-actions" hideWhenRunning>
-        <div className="human-message-with-todos-wrapper flex w-full flex-col gap-0">
-          <div className="relative w-full">
-            <ActionBarPrimitive.Edit asChild>
-              <button
-                aria-label="Edit message"
-                className={cn(
-                  USER_BUBBLE_BASE_CLASS,
-                  'cursor-pointer border-(--ui-stroke-tertiary) pr-9 text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground/95 transition-colors hover:border-(--ui-stroke-secondary)'
-                )}
-                onClick={() => triggerHaptic('selection')}
-                title="Edit message"
-                type="button"
-              >
-                {attachmentRefs.length > 0 && (
-                  <span className="-mx-1 flex flex-wrap gap-1 border-b border-border/45 pb-1.5">
-                    <DirectiveContent text={attachmentRefs.join(' ')} />
-                  </span>
-                )}
-                {hasBody && (
-                  <span className="wrap-anywhere block whitespace-pre-line">
-                    <MessagePrimitive.Parts components={{ Text: DirectiveText }} />
-                  </span>
-                )}
-              </button>
-            </ActionBarPrimitive.Edit>
-            {(showStop || showRestore) && (
-              <div className="pointer-events-none absolute right-1.5 bottom-1.5 z-10 flex items-center justify-center opacity-0 transition-opacity group-hover/user-message:opacity-100 group-focus-within/user-message:opacity-100">
-                {showStop ? (
+        <ActionBarPrimitive.Root className="relative w-full max-w-full" data-slot="aui_user-bubble-actions">
+          <div className="human-message-with-todos-wrapper flex w-full flex-col gap-0">
+            <div className="relative w-full">
+              {threadRunning ? (
+                <div className={bubbleClassName}>{bubbleContent}</div>
+              ) : (
+                <ActionBarPrimitive.Edit asChild>
                   <button
-                    aria-label="Stop"
-                    className="stop-button pointer-events-auto grid size-6 place-items-center rounded-full bg-(--ui-text-primary) text-(--ui-bg-editor) shadow-sm hover:opacity-90"
-                    onClick={event => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      void onCancel?.()
-                    }}
-                    title="Stop"
+                    aria-label="Edit message"
+                    className={bubbleClassName}
+                    onClick={() => triggerHaptic('selection')}
+                    title="Edit message"
                     type="button"
                   >
-                    <Codicon name="debug-stop" size="0.75rem" />
+                    {bubbleContent}
                   </button>
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className="restore-button flex size-6 items-center justify-center rounded-md text-(--ui-text-tertiary)"
-                    title="Editable checkpoint"
-                  >
-                    <Codicon name="discard" size="0.875rem" />
-                  </span>
-                )}
-              </div>
-            )}
+                </ActionBarPrimitive.Edit>
+              )}
+              {(showStop || showRestore) && (
+                <div className="pointer-events-none absolute right-2 bottom-2 z-10 flex items-center justify-center opacity-0 transition-opacity group-hover/user-message:opacity-100 group-focus-within/user-message:opacity-100">
+                  {showStop ? (
+                    <button
+                      aria-label="Stop"
+                      className={cn('pointer-events-auto size-5', USER_ACTION_ICON_BUTTON_CLASS)}
+                      onClick={event => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        void onCancel?.()
+                      }}
+                      title="Stop"
+                      type="button"
+                    >
+                      {StopGlyph}
+                    </button>
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      className="flex size-6 items-center justify-center rounded-md text-(--ui-text-tertiary)"
+                      title="Editable checkpoint"
+                    >
+                      <Codicon name="discard" size="0.875rem" />
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            <BranchPickerPrimitive.Root
+              className="checkpoint-container flex items-center gap-1 pb-0 pt-1 pl-1.5 text-[0.75rem] leading-none text-(--ui-text-tertiary)"
+              hideWhenSingleBranch
+            >
+              <span aria-hidden className="checkpoint-icon size-1.5 rounded-full border border-current" />
+              <BranchPickerPrimitive.Previous
+                className="checkpoint-restore-text cursor-pointer rounded-sm bg-transparent px-1 opacity-65 hover:opacity-100 disabled:hidden disabled:cursor-default"
+                title="Restore previous checkpoint"
+              >
+                Restore checkpoint
+              </BranchPickerPrimitive.Previous>
+              <span className="checkpoint-divider opacity-55">
+                <BranchPickerPrimitive.Number />/<BranchPickerPrimitive.Count />
+              </span>
+              <BranchPickerPrimitive.Next
+                className="checkpoint-restore-text cursor-pointer rounded-sm bg-transparent px-1 opacity-65 hover:opacity-100 disabled:hidden disabled:cursor-default"
+                title="Restore next checkpoint"
+              >
+                Go forward
+              </BranchPickerPrimitive.Next>
+            </BranchPickerPrimitive.Root>
           </div>
-          <BranchPickerPrimitive.Root
-            className="checkpoint-container flex items-center gap-1 pb-0 pt-1 pl-1.5 text-[0.75rem] leading-none text-(--ui-text-tertiary)"
-            hideWhenSingleBranch
-          >
-            <span aria-hidden className="checkpoint-icon size-1.5 rounded-full border border-current" />
-            <BranchPickerPrimitive.Previous
-              className="checkpoint-restore-text rounded-sm bg-transparent px-1 opacity-65 hover:opacity-100 disabled:hidden"
-              title="Restore previous checkpoint"
-            >
-              Restore checkpoint
-            </BranchPickerPrimitive.Previous>
-            <span className="checkpoint-divider opacity-55">
-              <BranchPickerPrimitive.Number />/<BranchPickerPrimitive.Count />
-            </span>
-            <BranchPickerPrimitive.Next
-              className="checkpoint-restore-text rounded-sm bg-transparent px-1 opacity-65 hover:opacity-100 disabled:hidden"
-              title="Restore next checkpoint"
-            >
-              Go forward
-            </BranchPickerPrimitive.Next>
-          </BranchPickerPrimitive.Root>
-        </div>
-      </ActionBarPrimitive.Root>
+        </ActionBarPrimitive.Root>
       </StickyHumanMessageContainer>
     </MessagePrimitive.Root>
   )
@@ -1055,6 +1097,7 @@ interface UserEditComposerProps {
 const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }) => {
   const aui = useAui()
   const draft = useAuiState(s => s.composer.text)
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<HTMLDivElement | null>(null)
   const draftRef = useRef(draft)
   const dragDepthRef = useRef(0)
@@ -1064,7 +1107,9 @@ const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }
   const [triggerItems, setTriggerItems] = useState<readonly Unstable_TriggerItem[]>([])
   const [triggerPlacement, setTriggerPlacement] = useState<'bottom' | 'top'>('top')
   const [focusRequestId, setFocusRequestId] = useState(0)
+  const [submitting, setSubmitting] = useState(false)
   const expanded = draft.includes('\n') || draft.length > 96
+  const canSubmit = draft.trim().length > 0
   const at = useAtCompletions({ cwd, gateway, sessionId })
   const slash = useSlashCompletions({ gateway })
 
@@ -1116,7 +1161,10 @@ const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }
 
     const editor = editorRef.current
 
-    if (editor && (editor.childNodes.length === 0 || (document.activeElement !== editor && composerPlainText(editor) !== draft))) {
+    if (
+      editor &&
+      (editor.childNodes.length === 0 || (document.activeElement !== editor && composerPlainText(editor) !== draft))
+    ) {
       renderComposerContents(editor, draft)
 
       if (document.activeElement === editor) {
@@ -1277,7 +1325,10 @@ const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }
         return false
       }
 
-      const refs = candidates.map(candidate => droppedFileInlineRef(candidate, cwd)).filter((ref): ref is string => Boolean(ref))
+      const refs = candidates
+        .map(candidate => droppedFileInlineRef(candidate, cwd))
+        .filter((ref): ref is string => Boolean(ref))
+
       const nextDraft = insertInlineRefsIntoEditor(editor, refs)
 
       if (nextDraft === null) {
@@ -1375,9 +1426,38 @@ const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }
   }
 
   const submitEdit = (editor: HTMLDivElement) => {
-    syncDraftFromEditor(editor)
+    const nextDraft = syncDraftFromEditor(editor)
+
+    if (submitting || !nextDraft.trim()) {
+      return
+    }
+
+    setSubmitting(true)
     aui.composer().send()
   }
+
+  const handleEditBlur = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      const nextTarget = event.relatedTarget
+
+      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+        return
+      }
+
+      window.setTimeout(() => {
+        const root = rootRef.current
+        const active = document.activeElement
+
+        if (submitting || (root && active && root.contains(active))) {
+          return
+        }
+
+        closeTrigger()
+        aui.composer().cancel()
+      }, 80)
+    },
+    [aui, closeTrigger, submitting]
+  )
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (trigger && triggerItems.length > 0) {
@@ -1428,17 +1508,16 @@ const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }
   }
 
   return (
-    <ComposerPrimitive.Root
-      className="contents"
-      data-slot="aui_edit-composer-root"
-    >
+    <ComposerPrimitive.Root className="contents" data-slot="aui_edit-composer-root">
       <StickyHumanMessageContainer>
         <div
-          className="composer-human-message-container human-execution-message-top relative flex w-full items-start rounded-md bg-(--glass-chat-surface-background)"
+          className="composer-human-message-container human-execution-message-top relative flex w-full items-start rounded-md bg-(--ui-chat-surface-background)"
+          onBlur={handleEditBlur}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
+          ref={rootRef}
         >
           {trigger && (
             <ComposerTriggerPopover
@@ -1464,7 +1543,7 @@ const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }
               aria-label="Edit message"
               autoFocus
               className={cn(
-                'ui-prompt-input-editor__input max-h-48 w-full resize-none bg-transparent p-0 text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground/95 outline-none',
+                'ui-prompt-input-editor__input max-h-48 w-full resize-none bg-transparent p-0 pr-7 text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground/95 outline-none',
                 'empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/60',
                 '**:data-ref-text:cursor-default',
                 expanded ? 'min-h-16' : 'min-h-[1.25rem]'
@@ -1486,6 +1565,22 @@ const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sessionId }
               suppressContentEditableWarning
             />
             <ComposerPrimitive.Input className="sr-only" tabIndex={-1} unstable_focusOnScrollToBottom={false} />
+            <button
+              aria-label="Send edited message"
+              className={cn('absolute right-2 bottom-2 size-5', USER_ACTION_ICON_BUTTON_CLASS)}
+              disabled={!canSubmit || submitting}
+              onClick={() => {
+                const editor = editorRef.current
+
+                if (editor) {
+                  submitEdit(editor)
+                }
+              }}
+              title="Send edited message"
+              type="button"
+            >
+              {submitting ? StopGlyph : <Codicon name="arrow-up" size={USER_ACTION_ICON_SIZE} />}
+            </button>
           </div>
         </div>
       </StickyHumanMessageContainer>

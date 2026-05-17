@@ -9,7 +9,7 @@ import { useSkinCommand } from '@/themes/use-skin-command'
 
 import { formatRefValue } from '../components/assistant-ui/directive-text'
 import { getSessionMessages, listSessions } from '../hermes'
-import { toChatMessages } from '../lib/chat-messages'
+import { preserveLocalAssistantErrors, toChatMessages } from '../lib/chat-messages'
 import {
   $pinnedSessionIds,
   $sessionsLimit,
@@ -280,7 +280,7 @@ export function DesktopController() {
             runtimeSessionId,
             state => ({
               ...state,
-              messages: toChatMessages(latest.messages)
+              messages: preserveLocalAssistantErrors(toChatMessages(latest.messages), state.messages)
             }),
             storedSessionId
           )

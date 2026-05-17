@@ -3,7 +3,7 @@ import { useCallback, useRef } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
 
 import { deleteSession, getSessionMessages } from '@/hermes'
-import { type ChatMessage, chatMessageText, toChatMessages } from '@/lib/chat-messages'
+import { type ChatMessage, chatMessageText, preserveLocalAssistantErrors, toChatMessages } from '@/lib/chat-messages'
 import { normalizePersonalityValue } from '@/lib/chat-runtime'
 import { embeddedImageUrls, textWithoutEmbeddedImages } from '@/lib/embedded-images'
 import { clearComposerAttachments, clearComposerDraft } from '@/store/composer'
@@ -92,6 +92,7 @@ function chatMessagesEquivalent(a: ChatMessage, b: ChatMessage): boolean {
     a.id !== b.id ||
     a.role !== b.role ||
     a.pending !== b.pending ||
+    a.error !== b.error ||
     a.hidden !== b.hidden ||
     a.branchGroupId !== b.branchGroupId
   ) {
@@ -194,7 +195,9 @@ function patchSessionWorkspace(sessionId: string, cwd: string | undefined) {
   setSessions(prev => prev.map(session => (session.id === sessionId ? { ...session, cwd } : session)))
 }
 
-function applyRuntimeInfo(info: SessionCreateResponse['info'] | undefined): Partial<Pick<ClientSessionState, 'branch' | 'cwd'>> | null {
+function applyRuntimeInfo(
+  info: SessionCreateResponse['info'] | undefined
+): Partial<Pick<ClientSessionState, 'branch' | 'cwd'>> | null {
   if (!info) {
     return null
   }
@@ -454,7 +457,7 @@ export function useSessionActions({
           const storedMessages = await getSessionMessages(storedSessionId)
 
           if (isCurrentResume()) {
-            localSnapshot = toChatMessages(storedMessages.messages)
+            localSnapshot = preserveLocalAssistantErrors(toChatMessages(storedMessages.messages), $messages.get())
 
             if (!chatMessageArraysEquivalent($messages.get(), localSnapshot)) {
               setMessages(localSnapshot)
@@ -474,7 +477,11 @@ export function useSessionActions({
         }
 
         const currentMessages = $messages.get()
-        const resumedMessages = reconcileResumeMessages(toChatMessages(resumed.messages), currentMessages)
+
+        const resumedMessages = preserveLocalAssistantErrors(
+          reconcileResumeMessages(toChatMessages(resumed.messages), currentMessages),
+          currentMessages
+        )
         // Avoid a second visible transcript rebuild on resume/switch.
         // `getSessionMessages()` is the stable stored transcript snapshot and
         // paints first; `session.resume` can return a slightly different
@@ -484,12 +491,14 @@ export function useSessionActions({
         // exists; use gateway messages only as a fallback when no local
         // snapshot was available.
 
-        const messagesForView =
+        const preferredMessages =
           localSnapshot.length > 0
             ? localSnapshot
             : chatMessageArraysEquivalent(currentMessages, resumedMessages)
               ? currentMessages
               : resumedMessages
+
+        const messagesForView = preserveLocalAssistantErrors(preferredMessages, currentMessages)
 
         setActiveSessionId(resumed.session_id)
         activeSessionIdRef.current = resumed.session_id
@@ -521,7 +530,7 @@ export function useSessionActions({
           return
         }
 
-        setMessages(toChatMessages(fallback.messages))
+        setMessages(preserveLocalAssistantErrors(toChatMessages(fallback.messages), $messages.get()))
         notifyError(err, 'Resume failed')
       } finally {
         if (isCurrentResume()) {
