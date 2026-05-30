@@ -335,6 +335,7 @@ export function ChatSidebar({ channel, className }: ChatSidebarProps) {
             }
             className="self-start min-w-0 px-0 py-0 normal-case tracking-normal text-sm font-medium hover:underline disabled:no-underline"
             title={info.model ?? "switch model"}
+            aria-label={info.model ?? "switch model"}
           >
             <span className="truncate">{modelLabel}</span>
           </Button>
@@ -357,6 +358,7 @@ export function ChatSidebar({ channel, className }: ChatSidebarProps) {
                 className="mt-1"
                 onClick={reconnect}
                 prefix={<RefreshCw />}
+                aria-label="reconnect"
               >
                 reconnect
               </Button>
