@@ -1259,6 +1259,7 @@ def build_skills_system_prompt(
             "\n"
             "Only proceed without loading a skill if genuinely none are relevant to the task."
         )
+        result = _skills_system_prompt_with_fingerprint(body)
 
     # ── Store in LRU cache ────────────────────────────────────────────
     with _SKILLS_PROMPT_CACHE_LOCK:
