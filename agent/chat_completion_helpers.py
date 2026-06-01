@@ -1002,7 +1002,7 @@ def build_assistant_message(agent, assistant_message, finish_reason: str) -> dic
 
 
 
-def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool:
+def try_activate_fallback(agent, reason: "FailoverReason | None" = None, *, api_error: Exception | None = None) -> bool:
     """Switch to the next fallback model/provider in the chain.
 
     Called when the current model is failing after retries.  Swaps the
@@ -1013,6 +1013,12 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
     Uses the centralized provider router (resolve_provider_client) for
     auth resolution and client construction — no duplicated provider→key
     mappings.
+
+    When ``api_error`` is a transport-level failure (no HTTP status code),
+    fallbacks sharing the same ``base_url`` as the current provider are
+    skipped — the endpoint itself is unreachable, so a different model on
+    the same host will fail identically. This respects the configured
+    fallback chain order rather than defaulting to OpenRouter.
     """
     if reason in {FailoverReason.rate_limit, FailoverReason.billing}:
         # Only start cooldown when leaving the primary provider.  If we're
@@ -1046,7 +1052,7 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
             "Fallback skip: chain entry %s/%s matches current provider/model",
             fb_provider, fb_model,
         )
-        return agent._try_activate_fallback()
+        return agent._try_activate_fallback(reason, api_error=api_error)
     if (
         fb_base_url_for_dedup
         and current_base_url
@@ -1057,7 +1063,29 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
             "Fallback skip: chain entry base_url %s matches current backend",
             fb_base_url_for_dedup,
         )
-        return agent._try_activate_fallback()
+        return agent._try_activate_fallback(reason, api_error=api_error)
+
+    # Transport errors (no HTTP status) mean the endpoint itself is unreachable.
+    # Skip fallbacks that share the same base_url — they'll fail identically.
+    # Resolve the fallback's effective base_url from the provider profile when
+    # the config entry doesn't specify one (base_url: '').
+    _is_transport_error = api_error is not None and not getattr(api_error, "status_code", None)
+    if _is_transport_error and current_base_url:
+        fb_effective_url = fb_base_url_for_dedup
+        if not fb_effective_url:
+            try:
+                from providers import get_provider_profile
+                fb_profile = get_provider_profile(fb_provider)
+                if fb_profile and fb_profile.base_url:
+                    fb_effective_url = fb_profile.base_url.rstrip("/").lower()
+            except Exception:
+                pass
+        if fb_effective_url and fb_effective_url == current_base_url:
+            logger.warning(
+                "Fallback skip: transport error on %s, skipping same-endpoint fallback %s/%s",
+                current_base_url, fb_provider, fb_model,
+            )
+            return agent._try_activate_fallback(reason, api_error=api_error)
 
     # Use centralized router for client construction.
     # raw_codex=True because the main agent needs direct responses.stream()
