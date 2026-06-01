@@ -1923,6 +1923,8 @@ def copy_reasoning_content_for_api(agent, source_msg: dict, api_msg: dict) -> No
     if source_msg.get("role") != "assistant":
         return
 
+    needs_thinking_pad = agent._needs_thinking_reasoning_pad()
+
     # 1. Explicit reasoning_content already set — preserve it verbatim
     # (includes DeepSeek/Kimi's own space-placeholder written at creation
     # time, and any valid reasoning content from the same provider).
@@ -1934,13 +1936,17 @@ def copy_reasoning_content_for_api(agent, source_msg: dict, api_msg: dict) -> No
     # doesn't 400 the user on the next turn.
     existing = source_msg.get("reasoning_content")
     if isinstance(existing, str):
-        if existing == "" and agent._needs_thinking_reasoning_pad():
+        if existing == "" and needs_thinking_pad:
             api_msg["reasoning_content"] = " "
-        else:
+        elif needs_thinking_pad:
             api_msg["reasoning_content"] = existing
+        else:
+            # Most providers do not require or accept replayed reasoning text.
+            # Keeping it in persisted transcripts is useful for UI/debugging,
+            # but sending it back on every later request can multiply prompt
+            # tokens in long reasoning-heavy sessions.
+            api_msg.pop("reasoning_content", None)
         return
-
-    needs_thinking_pad = agent._needs_thinking_reasoning_pad()
 
     # 2. Cross-provider poisoned history (#15748): on DeepSeek/Kimi,
     # if the source turn has tool_calls AND a 'reasoning' field but no
@@ -1968,7 +1974,7 @@ def copy_reasoning_content_for_api(agent, source_msg: dict, api_msg: dict) -> No
     # This must happen before the unconditional empty-string fallback so
     # genuine reasoning content is not overwritten (#15812 regression in
     # PR #15478).
-    if isinstance(normalized_reasoning, str) and normalized_reasoning:
+    if needs_thinking_pad and isinstance(normalized_reasoning, str) and normalized_reasoning:
         api_msg["reasoning_content"] = normalized_reasoning
         return
 
