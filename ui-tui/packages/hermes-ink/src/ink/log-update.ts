@@ -219,7 +219,12 @@ export class LogUpdate {
     // bring scrollback content into view, so we need a full reset.
     // Use <= (not <) because even when next height equals viewport height, the
     // scrollback depth from the previous render differs from a fresh render.
-    if (prevHadScrollback && nextFitsViewport && isShrinking) {
+    // In alt-screen mode there's no real scrollback — skip to avoid redundant
+    // fullReset that flashes with stale virtual-scroller dimensions.
+    if (
+      !altScreen &&
+      prevHadScrollback && nextFitsViewport && isShrinking
+    ) {
       logForDebugging(
         `Full reset (shrink->below): prevHeight=${prev.screen.height}, nextHeight=${next.screen.height}, viewport=${prev.viewport.height}`
       )

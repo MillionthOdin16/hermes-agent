@@ -489,6 +489,7 @@ export default class Ink {
     const cols = this.options.stdout.columns || 80
     const rows = this.options.stdout.rows || 24
     const dimsChanged = cols !== this.terminalColumns || rows !== this.terminalRows
+    const widthChanged = cols !== this.terminalColumns
 
     // Terminals often emit 2+ resize events for one user action
     // (window settling). Same-dimension events are usually no-ops,
@@ -519,17 +520,14 @@ export default class Ink {
       this.resizeSettleTimer = null
     }
 
-    // Alt screen: reset frame buffers so the next render repaints from
-    // scratch (prevFrameContaminated → every cell written, wrapped in
-    // BSU/ESU — old content stays visible until the new frame swaps
-    // atomically). Re-assert mouse tracking (some emulators reset it on
-    // resize). Do NOT write ENTER_ALT_SCREEN: iTerm2 treats ?1049h as a
-    // buffer clear even when already in alt — that's the blank flicker.
+    // Alt screen: only width changes need a full frame reset. Height-only
+    // changes, especially Android keyboard dismiss, are handled by the diff
+    // path without blanking previous frames.
     // Self-healing re-entry (if something kicked us out of alt) is handled
     // by handleResume (SIGCONT) and the sleep-wake detector; resize itself
     // doesn't exit alt-screen. Do NOT write ERASE_SCREEN: render() below
     // can take ~80ms; erasing first leaves the screen blank that whole time.
-    if (this.altScreenActive && !this.isPaused && this.options.stdout.isTTY) {
+    if (widthChanged && this.altScreenActive && !this.isPaused && this.options.stdout.isTTY) {
       this.prepareAltScreenResizeRepaint()
     }
 
