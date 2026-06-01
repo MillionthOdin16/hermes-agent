@@ -1719,7 +1719,28 @@ def _ensure_plugins_discovered(force: bool = False) -> PluginManager:
 
 def get_plugin_context_engine():
     """Return the plugin-registered context engine, or None."""
-    return _ensure_plugins_discovered()._context_engine
+    engine = _ensure_plugins_discovered()._context_engine
+    if engine is None:
+        return None
+
+    # Context engines keep mutable per-session runtime state: active
+    # session_id, ingestion cursors, token counters, compression counts, and
+    # model metadata.  The gateway can run multiple agents concurrently in one
+    # process, so handing every agent the plugin's registered singleton lets
+    # one session rebind another session's context engine mid-compression.
+    # Engines that support cloning should provide a fresh session-scoped
+    # instance here while sharing durable backing storage as needed.
+    clone = getattr(engine, "clone_for_session", None)
+    if callable(clone):
+        try:
+            return clone()
+        except Exception as exc:
+            logger.warning(
+                "Context engine %s clone_for_session() failed; using registered singleton: %s",
+                getattr(engine, "name", type(engine).__name__),
+                exc,
+            )
+    return engine
 
 
 def get_plugin_command_handler(name: str) -> Optional[Callable]:
