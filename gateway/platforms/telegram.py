@@ -1720,9 +1720,16 @@ class TelegramAdapter(BasePlatformAdapter):
                     error_callback=_polling_error_callback,
                 )
             
-            # Register bot commands so Telegram shows a hint menu when users type /
-            # List is derived from the central COMMAND_REGISTRY — adding a new
-            # gateway command there automatically adds it to the Telegram menu.
+            # Regis   async def edit_message(
+       self,
+       chat_id: str,
+       message_id: str,
+       content: str,
+       *,
+       finalize: bool = False,
+       metadata: Optional[Dict[str, Any]] = None,
+   ) -> SendResult:
+       """Edit a previously sent Telegram message.am menu.
             try:
                 from telegram import (
                     BotCommand,
@@ -1733,8 +1740,10 @@ class TelegramAdapter(BasePlatformAdapter):
                 from hermes_cli.commands import telegram_menu_commands
                 # Telegram allows up to 100 commands but has an undocumented
                 # payload size limit (~4KB total).  Limit to 30 core commands
-                # to stay well under the threshold while covering all categories.
-                menu_commands, hidden_count = telegram_menu_commands(max_commands=MAX_COMMANDS_PER_SCOPE)
+                # to stay well under the threshold while cove               return await self._edit_overflow_split(
+                   chat_id, message_id, content, finalize=finalize,
+                   metadata=metadata,
+               )DS_PER_SCOPE)
                 bot_commands = [BotCommand(name, desc) for name, desc in menu_commands]
                 # Register for all scopes independently — Telegram picks the
                 # narrowest matching scope per chat type (forum topics fall
@@ -2172,11 +2181,11 @@ class TelegramAdapter(BasePlatformAdapter):
         """
         if not self._bot:
             return SendResult(success=False, error="Not connected")
-
-        # Pre-flight: if content already exceeds the limit, split-and-deliver
-        # without round-tripping a doomed edit.
-        if utf16_len(content) > self.MAX_MESSAGE_LENGTH:
-            return await self._edit_overflow_split(
+       if utf16_len(content) > self.MAX_MESSAGE_LENGTH:
+           return await self._edit_overflow_split(
+               chat_id, message_id, content, finalize=finalize,
+               metadata=metadata,
+           )
                 chat_id, message_id, content, finalize=finalize, metadata=metadata,
             )
 

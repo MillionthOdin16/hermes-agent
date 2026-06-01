@@ -1184,8 +1184,59 @@ Continue from the most recent unfulfilled user ask and protected tail messages. 
 Summary generation was unavailable, so this is a best-effort deterministic fallback for {len(turns_to_summarize)} compacted message(s).{reason_text}"""
         summary = self._with_summary_prefix(redact_sensitive_text(body.strip()))
         if len(summary) > _FALLBACK_SUMMARY_MAX_CHARS:
-            summary = summary[: _FALLBACK_SUMMARY_MAX_CHARS - 42].rstrip() + "\n...[fallback summary truncated]"
-        return summary
+
+        return "\n\n".join(parts)
+
+    def _build_continuity_anchor(self, tail_messages: List[Dict[str, Any]]) -> str:
+        """Build a deterministic current-task anchor from preserved tail turns.
+
+        The auxiliary summarizer can occasionally preserve a stale "Active
+        Task" during repeated compactions.  This anchor is generated locally
+        from the uncompressed tail so the latest user request and recent tool
+        evidence survive even when the summary prose is imperfect.
+        """
+        if not tail_messages:
+            return ""
+
+        latest_user = ""
+        recent_tool = ""
+        recent_assistant = ""
+        for msg in reversed(tail_messages):
+            role = msg.get("role")
+            text = redact_sensitive_text(_content_text_for_contains(msg.get("content") or "")).strip()
+            if not text:
+                continue
+            text = " ".join(text.split())
+            if len(text) > 700:
+                text = text[:697].rstrip() + "..."
+            if role == "user" and not latest_user:
+                latest_user = text
+            elif role == "tool" and not recent_tool:
+                recent_tool = text
+            elif role == "assistant" and not recent_assistant:
+                recent_assistant = text
+            if latest_user and recent_tool and recent_assistant:
+                break
+
+        if not latest_user and not recent_tool and not recent_assistant:
+            return ""
+
+        lines = [
+            "## Current Continuity Anchor",
+            "Generated deterministically from the uncompressed recent tail. "
+            "Use this to preserve the latest task after compaction.",
+        ]
+        if latest_user:
+            lines.append(f"- Latest user request: {latest_user}")
+        if recent_assistant:
+            lines.append(f"- Latest assistant state: {recent_assistant}")
+        if recent_tool:
+            lines.append(f"- Latest tool result: {recent_tool}")
+        lines.append(
+            "- Instruction: answer the newest user request in the live tail; "
+            "do not resume older summarized work unless the user asks."
+        )
+        return "\n".join(lines)
 
     def _fallback_to_main_for_compression(self, e: Exception, reason: str) -> None:
         """Switch from a separate ``summary_model`` back to the main model.
@@ -1986,12 +2037,16 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             self._last_summary_fallback_used = True
             summary = self._build_static_fallback_summary(
                 turns_to_summarize,
-                reason=self._last_summary_error,
+                f"messages contained earlier work in this session. Continue based on the "
+                f"recent messages below and the current state of any files or resources."
             )
+
+        continuity_anchor = self._build_continuity_anchor(messages[compress_end:])
+        if continuity_anchor and "## Current Continuity Anchor" not in summary:
+            summary = summary.rstrip() + "\n\n" + continuity_anchor
 
         _merge_summary_into_tail = False
         last_head_role = messages[compress_start - 1].get("role", "user") if compress_start > 0 else "user"
-        first_tail_role = messages[compress_end].get("role", "user") if compress_end < n_messages else "user"
         # Pick a role that avoids consecutive same-role with both neighbors.
         # Priority: avoid colliding with head (already committed), then tail.
         if last_head_role in {"assistant", "tool"}:

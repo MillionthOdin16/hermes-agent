@@ -9094,18 +9094,23 @@ class GatewayRunner:
                                         lambda: _hyg_agent._compress_context(
                                             _hyg_msgs, "",
                                             approx_tokens=_approx_tokens,
-                                        ),
-                                    )
-
                                     # _compress_context ends the old session and creates
                                     # a new session_id.  Write compressed messages into
                                     # the NEW session so the old transcript stays intact
                                     # and searchable via session_search.
                                     _hyg_new_sid = _hyg_agent.session_id
                                     if _hyg_new_sid != session_entry.session_id:
-                                        session_entry.session_id = _hyg_new_sid
-                                        self.session_store._save()
-                                        self._sync_telegram_topic_binding(
+                                        self._persist_gateway_session_rollover(
+                                            session_key=session_key,
+                                            source=source,
+                                            session_entry=session_entry,
+                                            new_session_id=_hyg_new_sid,
+                                            reason="session_hygiene",
+                                        )
+
+                                    self.session_store.rewrite_transcript(
+                                        session_entry.session_id, _compressed
+                                    )
                                             source, session_entry,
                                             reason="hygiene-compression",
                                         )
@@ -9366,12 +9371,18 @@ class GatewayRunner:
             # the case where agent did work but returned no text. Fix for #18765.
             response = _normalize_empty_agent_response(
                 agent_result, response, history_len=len(history),
-            )
-            response = _sanitize_gateway_final_response(source.platform, response)
-
             # If the agent's session_id changed during compression, update
             # session_entry so transcript writes below go to the right session.
             if agent_result.get("session_id") and agent_result["session_id"] != session_entry.session_id:
+                self._persist_gateway_session_rollover(
+                    session_key=session_key,
+                    source=source,
+                    session_entry=session_entry,
+                    new_session_id=agent_result["session_id"],
+                    reason="agent_result",
+                )
+
+           # Prepend reasoning/thinking if display is enabled (per-platform)
                 session_entry.session_id = agent_result["session_id"]
                 self.session_store._save()
                 self._sync_telegram_topic_binding(
@@ -17542,16 +17553,29 @@ class GatewayRunner:
                 with _cache_lock:
                     cached = _cache.get(session_key)
                     if cached and cached[1] == _sig:
-                        agent = cached[0]
+                        cached_agent = cached[0]
+                        cached_session_id = getattr(cached_agent, "session_id", None)
+                        if cached_session_id and cached_session_id != session_id:
+                            logger.info(
+                                "Evicting cached agent for %s: cached session %s "
+                                "does not match active session %s",
+                                session_key,
+                                cached_session_id,
+                                session_id,
+                            )
+                            _cache.pop(session_key, None)
+                        else:
+                            agent = cached_agent
                         # Refresh LRU order so the cap enforcement evicts
                         # truly-oldest entries, not the one we just used.
-                        if hasattr(_cache, "move_to_end"):
+                        if agent is not None and hasattr(_cache, "move_to_end"):
                             try:
                                 _cache.move_to_end(session_key)
                             except KeyError:
                                 pass
-                        self._init_cached_agent_for_turn(agent, _interrupt_depth)
-                        logger.debug("Reusing cached agent for session %s", session_key)
+                        if agent is not None:
+                            self._init_cached_agent_for_turn(agent, _interrupt_depth)
+                            logger.debug("Reusing cached agent for session %s", session_key)
 
             if agent is None:
                 # Config changed or first message — create fresh agent
@@ -18032,6 +18056,7 @@ class GatewayRunner:
 
             if not final_response:
                 error_msg = f"⚠️ {result['error']}" if result.get("error") else ""
+                effective_session_id = getattr(agent_holder[0], 'session_id', session_id) if agent_holder[0] else session_id
                 return {
                     "final_response": error_msg,
                     "messages": result.get("messages", []),
@@ -18050,6 +18075,7 @@ class GatewayRunner:
                     "output_tokens": _output_toks,
                     "model": _resolved_model,
                     "context_length": _context_length,
+                    "session_id": effective_session_id,
                 }
             
             # Scan tool results for MEDIA:<path> tags that need to be delivered
@@ -18093,17 +18119,22 @@ class GatewayRunner:
             # Sync session_id: the agent may have created a new session during
             # mid-run context compression (_compress_context splits sessions).
             # If so, update the session store entry so the NEXT message loads
-            # the compressed transcript, not the stale pre-compression one.
-            agent = agent_holder[0]
-            _session_was_split = False
-            if agent and session_key and hasattr(agent, 'session_id') and agent.session_id != session_id:
-                _session_was_split = True
-                logger.info(
-                    "Session split detected: %s → %s (compression)",
-                    session_id, agent.session_id,
-                )
-                entry = self.session_store._entries.get(session_key)
-                if entry:
+           if agent and session_key and hasattr(agent, 'session_id') and agent.session_id != session_id:
+               _session_was_split = True
+               logger.info(
+                   "Session split detected: %s → %s (compression)",
+                   session_id, agent.session_id,
+               )
+               entry = self.session_store._entries.get(session_key)
+               if entry:
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=entry,
+                        new_session_id=agent.session_id,
+                        reason="run_agent",
+                    )
+           effective_session_id = getattr(agent, 'session_id', session_id) if agent else session_id
                     entry.session_id = agent.session_id
                     self.session_store._save()
 

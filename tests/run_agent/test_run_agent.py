@@ -3585,18 +3585,143 @@ class TestRunConversation:
             result = agent.run_conversation("hello", conversation_history=prefill)
 
         mock_compress.assert_called_once()
-        assert result["final_response"] == "Recovered after compression"
-        assert result["completed"] is True
-
     def test_minimax_delta_overflow_keeps_known_context_length(self, agent):
         """MiniMax reports overflow deltas like 'limit (2013)' without the real window.
 
-        Keep the known 204,800-token window and compress instead of probing down
-        to the generic 128K fallback tier.
+        Keep the known 204,800-token window and retry with a bounded one-shot
+        output cap instead of probing down or invoking compression.
+        assert agent.context_compressor._context_probed is False
+        assert result["final_response"] == "Recovered after compression"
+        assert result["completed"] is True
+
+    def test_minimax_delta_overflow_retries_output_cap_before_compression_when_estimate_is_tight(self, agent):
+        """Near-window MiniMax delta overflows should first try a tiny output cap.
+
+        Live MiniMax errors report only an overflow delta like ``(2013)``. When
+        Hermes' rough request estimate is near or above the known window, that
+        can still be an input+max_tokens overflow rather than a genuinely
+        uncompressible prompt. Retry once with a conservative output cap before
+        invoking compression.
         """
         self._setup_agent(agent)
         agent.provider = "minimax"
-        agent.model = "MiniMax-M2.7-highspeed"
+        agent.model = "MiniMax-M2.7"
+        agent.base_url = "https://api.minimax.io/anthropic"
+        agent.context_compressor.context_length = 204_800
+        agent.context_compressor.threshold_tokens = 999_999
+
+        err_400 = Exception(
+            "HTTP 400: invalid params, context window exceeds limit (2013)"
+        )
+        err_400.status_code = 400
+        ok_resp = _mock_response(content="Recovered with capped output", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [err_400, ok_resp]
+
+        with (
+            patch("agent.conversation_loop.estimate_messages_tokens_rough", return_value=206_000),
+            patch("agent.conversation_loop.estimate_request_tokens_rough", return_value=206_000),
+            patch.object(agent, "_compress_context") as mock_compress,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("hello")
+
+        mock_compress.assert_not_called()
+        assert agent.context_compressor.context_length == 204_800
+        assert result["final_response"] == "Recovered with capped output"
+        assert result["completed"] is True
+
+    def test_minimax_delta_overflow_output_cap_uses_full_request_estimate(self, agent):
+        """The retry cap must include system prompt and tool schema overhead.
+
+        A live MiniMax failure showed ~190K full request tokens but only ~160K
+        message tokens. Using the smaller messages-only estimate produced a
+        ~42K retry cap, keeping input+max_tokens above the 204,800 window and
+        causing another overflow.
+        """
+        self._setup_agent(agent)
+        agent.provider = "minimax"
+        agent.model = "MiniMax-M2.7"
+        agent.base_url = "https://api.minimax.io/anthropic"
+        agent.context_compressor.context_length = 204_800
+        agent.context_compressor.threshold_tokens = 999_999
+        agent.max_tokens = 65_536
+
+        err_400 = Exception(
+            "HTTP 400: invalid params, context window exceeds limit (2013)"
+        )
+        err_400.status_code = 400
+        ok_resp = _mock_response(content="Recovered with full-request cap", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [err_400, ok_resp]
+
+        with (
+            patch("agent.conversation_loop.estimate_messages_tokens_rough", return_value=160_874),
+            patch("agent.conversation_loop.estimate_request_tokens_rough", return_value=190_116),
+            patch.object(agent, "_compress_context") as mock_compress,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("hello")
+
+        mock_compress.assert_not_called()
+        assert result["final_response"] == "Recovered with full-request cap"
+        retry_kwargs = agent.client.chat.completions.create.call_args_list[1].kwargs
+        assert retry_kwargs["max_tokens"] == 13_660
+
+    def test_context_overflow_retries_when_compression_rewrites_same_message_count(self, agent):
+        """Compression can reduce tokens without reducing message count.
+
+        LCM and other context engines may rewrite/sanitize active context while
+        preserving the number of messages. Treating only ``len(messages)`` as
+        the success signal makes Hermes declare compression exhausted even
+        though the returned context changed and should be retried.
+        """
+        self._setup_agent(agent)
+        agent.provider = "minimax"
+        agent.model = "MiniMax-M2.7"
+        agent.base_url = "https://api.minimax.io/anthropic"
+        agent.context_compressor.context_length = 204_800
+        agent.context_compressor.threshold_tokens = 999_999
+
+        err_400 = Exception(
+            "HTTP 400: invalid params, context window exceeds limit (2013)"
+        )
+        err_400.status_code = 400
+        ok_resp = _mock_response(content="Recovered after same-count compression", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [err_400, err_400, ok_resp]
+
+        prefill = [
+            {"role": "user", "content": "previous question " + "x" * 10_000},
+            {"role": "assistant", "content": "previous answer " + "y" * 10_000},
+        ]
+        rewritten = [
+            {"role": "user", "content": "previous question summarized"},
+            {"role": "assistant", "content": "previous answer summarized"},
+            {"role": "user", "content": "hello"},
+        ]
+        rewritten_len = len(rewritten)
+
+        with (
+            patch("agent.conversation_loop.estimate_messages_tokens_rough", return_value=206_000),
+            patch("agent.conversation_loop.estimate_request_tokens_rough", return_value=206_000),
+            patch.object(agent, "_compress_context") as mock_compress,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            mock_compress.return_value = (rewritten, "compressed system prompt")
+            result = agent.run_conversation("hello", conversation_history=prefill)
+
+        mock_compress.assert_called_once()
+        assert rewritten_len == len(prefill) + 1
+        assert result["final_response"] == "Recovered after same-count compression"
+        assert result["completed"] is True
+
+    def test_non_minimax_delta_overflow_still_probes_down(self, agent):
+        """Non-MiniMax providers should keep the generic probe-down behavior."""
+        self._setup_agent(agent)
         agent.base_url = "https://api.minimax.io/anthropic"
         agent.context_compressor.context_length = 204_800
         agent.context_compressor.threshold_tokens = int(

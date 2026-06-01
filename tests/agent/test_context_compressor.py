@@ -1034,13 +1034,44 @@ class TestAbortOnSummaryFailure:
         assert result == msgs
         # No "Summary generation was unavailable" placeholder leaked in.
         assert not any(
-            isinstance(m.get("content"), str) and "Summary generation was unavailable" in m["content"]
-            for m in result
+            isinstance(m.get("content"), str) and "Summary generation was unavailable" in m["content"]        assert summary_msg["content"].rstrip().endswith(
+            "respond to the message below, not the summary above ---"
         )
 
-    def test_compress_clears_abort_flag_on_subsequent_success(self):
+    def test_summary_contains_deterministic_continuity_anchor(self):
+        """The compressed checkpoint should preserve the fresh task outside
+        the auxiliary summarizer's generated prose."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "summary text"
+
+        with patch("agent.context_compressor.get_model_context_length", return_value=100000):
+            c = ContextCompressor(model="test", quiet_mode=True, protect_first_n=2, protect_last_n=3)
+
+        msgs = [
+            {"role": "user", "content": "old task"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "middle 1"},
+            {"role": "assistant", "content": "middle 2"},
+            {"role": "tool", "tool_call_id": "call_1", "content": "D:/models/router/model.gguf exists"},
+            {"role": "user", "content": "What VMS?. There are no VMS. Check the error logs on desktop"},
+            {"role": "assistant", "content": "I'll check the logs now."},
+            {"role": "tool", "tool_call_id": "call_2", "content": "errors.log: context window exceeds limit"},
+        ]
+
+        with patch("agent.context_compressor.call_llm", return_value=mock_response):
+            result = c.compress(msgs)
+
+        summary_text = "\n".join(
+            str(m.get("content") or "")
+            for m in result
+            if SUMMARY_PREFIX in str(m.get("content") or "")
+        )
+        assert "Current Continuity Anchor" in summary_text
+        assert "What VMS?. There are no VMS. Check the error logs on desktop" in summary_text
+        assert "errors.log: context window exceeds limit" in summary_text
+
+   def test_summary_role_avoids_consecutive_user_messages(self):= [MagicMock()]
         mock_response.choices[0].message.content = "summary text"
 
         c = self._make_compressor()

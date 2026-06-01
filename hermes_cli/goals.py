@@ -267,18 +267,62 @@ def save_goal(session_id: str, state: GoalState) -> None:
     try:
         db.set_meta(_meta_key(session_id), state.to_json())
     except Exception as exc:
-        logger.debug("GoalManager: set_meta failed: %s", exc)
-
-
 def clear_goal(session_id: str) -> None:
     """Mark a goal cleared in the DB (preserved for audit, status=cleared)."""
     state = load_goal(session_id)
     if state is None:
         return
-    state.status = "cleared"
+    state.status = GoalStatus.CLEARED.value
     save_goal(session_id, state)
 
 
+def migrate_goal_session(old_session_id: str, new_session_id: str, *, reason: str = "session_rollover") -> bool:
+    """Move an active goal when compression rolls a conversation to a child session.
+
+    Goals are keyed by session id.  Context compression intentionally creates a
+    new session id for the compacted child transcript, so the active goal must
+    follow that child or the gateway will think the goal disappeared.
+    """
+    if not old_session_id or not new_session_id or old_session_id == new_session_id:
+        return False
+
+    old_state = load_goal(old_session_id)
+    if old_state is None or old_state.status not in {
+        GoalStatus.ACTIVE.value,
+        GoalStatus.PAUSED.value,
+    }:
+        return False
+
+    existing = load_goal(new_session_id)
+    if existing is not None and existing.status in {
+        GoalStatus.ACTIVE.value,
+        GoalStatus.PAUSED.value,
+    }:
+        return False
+
+    copied = GoalState.from_json(old_state.to_json())
+    _append_goal_event(copied, "session_rollover", {
+        "from_session_id": old_session_id,
+        "to_session_id": new_session_id,
+        "reason": reason,
+    })
+    save_goal(new_session_id, copied)
+
+    archived = GoalState.from_json(old_state.to_json())
+    archived.status = GoalStatus.CLEARED.value
+    archived.paused_reason = f"migrated to {new_session_id}"
+    _append_goal_event(archived, "session_rollover_migrated", {
+        "from_session_id": old_session_id,
+        "to_session_id": new_session_id,
+        "reason": reason,
+    })
+    save_goal(old_session_id, archived)
+    return True
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Conversation-history dump (read by the judge tool loop)
+# ──────────────────────────────────────────────────────────────────────
 # ──────────────────────────────────────────────────────────────────────
 # Judge
 # ──────────────────────────────────────────────────────────────────────

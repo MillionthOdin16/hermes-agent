@@ -1,10 +1,10 @@
 """Tests for Telegram private-chat topic-mode routing.
 
 Topic mode makes the root Telegram DM a system lobby while user-created
-Telegram topics act as independent Hermes session lanes.
-"""
-
 from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -154,12 +154,162 @@ def _make_runner(session_db=None):
     runner._clear_session_boundary_security_state = MagicMock()
     runner._set_session_reasoning_override = MagicMock()
     runner._format_session_info = MagicMock(return_value="")
-    return runner
+    assert binding is not None
+    assert binding["session_id"] == "new-topic-session"
 
 
 @pytest.mark.asyncio
-async def test_root_telegram_dm_prompt_is_system_lobby_when_topic_mode_enabled(monkeypatch):
+async def test_compression_split_inside_telegram_topic_rewrites_binding(tmp_path, monkeypatch):
+    """Compression session rollovers must not leave topic bindings stale.
+
+    If the binding keeps pointing at the pre-compression root, the next
+    inbound topic message switches the gateway back to that old session and
+    compression repeats from the same ancestor.
+    """
     import gateway.run as gateway_run
+
+    session_db = SessionDB(db_path=tmp_path / "state.db")
+    session_db.enable_telegram_topic_mode(chat_id="208214988", user_id="208214988")
+    session_db.create_session(
+        session_id="old-topic-session",
+        source="telegram",
+        user_id="208214988",
+    )
+    session_db.create_session(
+        session_id="compressed-topic-session",
+        source="telegram",
+        user_id="208214988",
+        parent_session_id="old-topic-session",
+    )
+    topic_source = _make_source(thread_id="17585")
+    topic_key = build_session_key(topic_source)
+    session_db.bind_telegram_topic(
+        chat_id="208214988",
+        thread_id="17585",
+        user_id="208214988",
+        session_key=topic_key,
+        session_id="old-topic-session",
+    )
+
+    runner = _make_runner(session_db=session_db)
+    runner.session_store.get_or_create_session.side_effect = lambda source, force_new=False: SessionEntry(
+        session_key=topic_key,
+        session_id="old-topic-session",
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        platform=Platform.TELEGRAM,
+        chat_type="dm",
+        origin=source,
+    )
+    runner._run_agent = AsyncMock(return_value={
+        "final_response": "done",
+        "messages": [
+            {"role": "user", "content": "trigger compression"},
+            {"role": "assistant", "content": "done"},
+        ],
+        "api_calls": 1,
+        "completed": True,
+        "history_offset": 0,
+        "last_prompt_tokens": 42,
+        "session_id": "compressed-topic-session",
+        "model": "MiniMax-M2.7",
+        "context_length": 204800,
+    })
+
+    monkeypatch.setattr(
+        gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"}
+    )
+
+    result = await runner._handle_message(_make_event("trigger compression", thread_id="17585"))
+
+    assert result.startswith("done")
+    binding = session_db.get_telegram_topic_binding(
+        chat_id="208214988", thread_id="17585",
+    )
+    assert binding is not None
+    assert binding["session_id"] == "compressed-topic-session"
+
+
+@pytest.mark.asyncio
+async def test_compression_split_migrates_active_goal_to_child_session(tmp_path, monkeypatch):
+    """A compression rollover must not make the active goal disappear."""
+    import gateway.run as gateway_run
+    from hermes_cli import goals
+    from hermes_cli.goals import GoalDecision, GoalManager, GoalStatus, GoalVerdict, load_goal
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    goals._DB_CACHE.clear()
+
+    session_db = SessionDB(db_path=tmp_path / "state.db")
+    session_db.enable_telegram_topic_mode(chat_id="208214988", user_id="208214988")
+    session_db.create_session(session_id="old-topic-session", source="telegram", user_id="208214988")
+    session_db.create_session(
+        session_id="compressed-topic-session",
+        source="telegram",
+        user_id="208214988",
+        parent_session_id="old-topic-session",
+    )
+    topic_source = _make_source(thread_id="17585")
+    topic_key = build_session_key(topic_source)
+    session_db.bind_telegram_topic(
+        chat_id="208214988",
+        thread_id="17585",
+        user_id="208214988",
+        session_key=topic_key,
+        session_id="old-topic-session",
+    )
+
+    GoalManager("old-topic-session").set("finish compression-sensitive goal")
+
+    runner = _make_runner(session_db=session_db)
+    runner.session_store.get_or_create_session.side_effect = lambda source, force_new=False: SessionEntry(
+        session_key=topic_key,
+        session_id="old-topic-session",
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        platform=Platform.TELEGRAM,
+        chat_type="dm",
+        origin=source,
+    )
+    runner._run_agent = AsyncMock(return_value={
+        "final_response": "done",
+        "messages": [{"role": "user", "content": "trigger compression"}, {"role": "assistant", "content": "done"}],
+        "api_calls": 1,
+        "completed": True,
+        "history_offset": 0,
+        "last_prompt_tokens": 42,
+        "session_id": "compressed-topic-session",
+        "model": "MiniMax-M2.7",
+        "context_length": 204800,
+    })
+
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
+
+    with patch(
+        "hermes_cli.goals.GoalManager.evaluate_after_turn",
+        return_value=GoalDecision(
+            status=GoalStatus.ACTIVE,
+            should_continue=False,
+            continuation_prompt=None,
+            verdict=GoalVerdict.SKIPPED,
+            reason="test",
+        ),
+    ):
+        result = await runner._handle_message(_make_event("trigger compression", thread_id="17585"))
+
+    assert result.startswith("done")
+    migrated = load_goal("compressed-topic-session")
+    assert migrated is not None
+    assert migrated.status == "active"
+    assert migrated.goal == "finish compression-sensitive goal"
+    assert any(evt.get("type") == "session_rollover" for evt in migrated.goal_event_log)
+    goals._DB_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_topic_root_command_explicitly_migrates_and_enables_topic_mode(tmp_path, monkeypatch):
 
     runner = _make_runner()
     runner._telegram_topic_mode_enabled = lambda source: True

@@ -730,6 +730,7 @@ def run_conversation(
     truncated_tool_call_retries = 0
     truncated_response_parts: List[str] = []
     compression_attempts = 0
+    minimax_delta_output_cap_retried = False
     _turn_exit_reason = "unknown"  # Diagnostic: why the loop ended
 
     # Per-turn file-mutation verifier state.  Keyed by resolved path;
@@ -2972,14 +2973,60 @@ def run_conversation(
                         _provider_lower in {"minimax", "minimax-cn"}
                         or _base_lower.startswith((
                             "https://api.minimax.io/anthropic",
-                            "https://api.minimaxi.com/anthropic",
-                        ))
-                    )
                     minimax_delta_only_overflow = (
                         is_minimax_provider
-                        and new_ctx is None
+                        and parsed_limit is None
                         and "context window exceeds limit (" in error_msg
                     )
+                    if (
+                        minimax_delta_only_overflow
+                        and old_ctx
+                        and not minimax_delta_output_cap_retried
+                    ):
+                        # MiniMax reports only the overflow delta for both
+                        # prompt-too-large and input+max_tokens overflow. The
+                        # rough estimator can be high near the window, so first
+                        # retry with a conservative one-shot output cap before
+                        # invoking compression. If the prompt is genuinely too
+                        # long, the next error falls through to compression.
+                        cap_basis_tokens = approx_request_tokens or approx_tokens
+                        if cap_basis_tokens and cap_basis_tokens < old_ctx - 512:
+                            safe_out = max(1, old_ctx - cap_basis_tokens - 1024)
+                        else:
+                            safe_out = 512
+                        try:
+                            from agent.anthropic_adapter import _get_anthropic_max_output
+                            safe_out = min(safe_out, _get_anthropic_max_output(agent.model))
+                        except Exception:
+                            pass
+                        minimax_delta_output_cap_retried = True
+                        agent._ephemeral_max_output_tokens = safe_out
+                        agent._vprint(
+                            f"{agent.log_prefix}⚠️  MiniMax reported context overflow, "
+                            f"retrying once with "
+                            f"max_tokens={safe_out:,} (context_length unchanged at {old_ctx:,})",
+                            force=True,
+                        )
+                        compression_attempts += 1
+                        if compression_attempts > max_compression_attempts:
+                            agent._vprint(f"{agent.log_prefix}❌ Max compression attempts ({max_compression_attempts}) reached.", force=True)
+                            agent._vprint(f"{agent.log_prefix}   💡 Try /new to start a fresh conversation, or /compress to retry compression.", force=True)
+                            logging.error(f"{agent.log_prefix}Context compression failed after {max_compression_attempts} attempts.")
+                            agent._persist_session(messages, conversation_history)
+                            return {
+                                "messages": messages,
+                                "completed": False,
+                                "api_calls": api_call_count,
+                                "error": f"Context length exceeded: max compression attempts ({max_compression_attempts}) reached.",
+                                "partial": True,
+                                "failed": True,
+                                "compression_exhausted": True,
+                            }
+                        restart_with_compressed_messages = True
+                        break
+                    if parsed_limit and parsed_limit < old_ctx:
+                        new_ctx = parsed_limit
+                        agent._vprint(f"{agent.log_prefix}Context limit detected from API: {new_ctx:,} tokens (was {old_ctx:,})", force=True)
 
                     if new_ctx is not None:
                         agent._buffer_vprint(f"Context limit detected from API: {new_ctx:,} tokens (was {old_ctx:,})")
