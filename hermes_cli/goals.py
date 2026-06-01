@@ -240,6 +240,23 @@ def load_goal(session_id: str) -> Optional[GoalState]:
     """Load the goal for a session, or None if none exists."""
     if not session_id:
         return None
+
+    # V2 repository path — get_active_goal already handles legacy migration on read
+    if _v2_enabled():
+        db = _get_session_db()
+        if db is not None:
+            try:
+                from hermes_cli.goal_core.repository import GoalRepository
+                repo = GoalRepository(db=db)
+                rec = repo.get_active_goal(session_id)
+                if rec is not None:
+                    return rec.state
+            except Exception as exc:
+                logger.error("GoalManager: GoalRepository.get_active_goal failed: %s", exc)
+                return None
+        return None
+
+    # Legacy state_meta path (v2_repository disabled)
     db = _get_session_db()
     if db is None:
         return None
@@ -257,10 +274,37 @@ def load_goal(session_id: str) -> Optional[GoalState]:
         return None
 
 
+# ── V2 repository feature flag ──
+
+def _v2_enabled() -> bool:
+    """Check whether goals.v2_repository is enabled (lazy import to avoid circular)."""
+    try:
+        from hermes_cli.goal_core.repository import _v2_enabled as _repo_v2_enabled
+        return _repo_v2_enabled()
+    except Exception:
+        return False
+
+
 def save_goal(session_id: str, state: GoalState) -> None:
     """Persist a goal to SessionDB. No-op if DB unavailable."""
     if not session_id:
         return
+
+    # V2 repository path
+    if _v2_enabled():
+        db = _get_session_db()
+        if db is not None:
+            try:
+                from hermes_cli.goal_core.repository import GoalRepository
+                repo = GoalRepository(db=db)
+                repo.set_active_goal(session_id, state)
+                return
+            except Exception as exc:
+                logger.error("GoalManager: GoalRepository.set_active_goal failed: %s", exc)
+                return
+        return
+
+    # Legacy state_meta path (v2_repository disabled)
     db = _get_session_db()
     if db is None:
         return
