@@ -2248,6 +2248,43 @@ def _resolve_attachment_path(raw_path: str) -> Path | None:
 
 
 
+def _format_process_notification(evt: dict) -> "str | None":
+    """Format a process notification event into a [IMPORTANT: ...] message.
+
+    Handles both completion events (notify_on_complete) and watch pattern
+    match events from the unified completion_queue.
+    """
+    evt_type = evt.get("type", "completion")
+    _sid = evt.get("session_id", "unknown")
+    _cmd = evt.get("command", "unknown")
+
+    if evt_type == "watch_disabled":
+        return f"[IMPORTANT: {evt.get('message', '')}]"
+
+    if evt_type == "watch_match":
+        _pat = evt.get("pattern", "?")
+        _out = evt.get("output", "")
+        _sup = evt.get("suppressed", 0)
+        text = (
+            f"[system] [IMPORTANT: Background process {_sid} matched "
+            f"watch pattern \"{_pat}\".\n"
+            f"Command: {_cmd}\n"
+            f"Matched output:\n{_out}"
+        )
+        if _sup:
+            text += f"\n({_sup} earlier matches were suppressed by rate limit)"
+        text += "]"
+        return text
+
+    # Default: completion event
+    _exit = evt.get("exit_code", "?")
+    _out = evt.get("output", "")
+    return (
+        f"[system] [IMPORTANT: Background process {_sid} completed "
+        f"(exit code {_exit}).\n"
+        f"Command: {_cmd}\n"
+        f"Output:\n{_out}]"
+    )
 
 
 def _detect_file_drop(user_input: str) -> "dict | None":
@@ -3375,10 +3412,6 @@ class HermesCLI:
         startup UI and ``_replay_output_history`` cannot reconstruct it
         (the banner was never added to ``_OUTPUT_HISTORY``).
 
-        Instead we just reset prompt_toolkit's renderer cache so the next
-        incremental redraw starts from a clean slate, then let
-        ``original_on_resize`` recalculate layout for the new size.
-
         We also flag ``_status_bar_suppressed_after_resize`` so the dynamic
         status bar and input separator rules stay hidden until the next user
         input.  On column shrink the terminal reflows already-rendered status
@@ -3389,14 +3422,17 @@ class HermesCLI:
         """
         self._status_bar_suppressed_after_resize = True
         try:
-            app.renderer.reset(leave_alternate_screen=False)
-        except Exception:
-            pass
-        try:
-            app.invalidate()
-        except Exception:
-            pass
-        original_on_resize()
+            original_on_resize()
+        finally:
+            # Do NOT call app.renderer.reset() here. In non-fullscreen
+            # prompt_toolkit mode the renderer tracks how many rows of prompt
+            # + bottom toolbar/status bar it owns. Resetting that state after
+            # resize makes subsequent status timer invalidations stamp a new
+            # toolbar into scrollback instead of replacing the old one.
+            try:
+                app.invalidate()
+            except Exception:
+                pass
 
     def _schedule_resize_recovery(self, app, original_on_resize, delay: float = 0.12) -> None:
         """Debounce resize redraws so footer chrome is not stamped into scrollback."""
@@ -9480,10 +9516,19 @@ class HermesCLI:
             _cprint(f"  {mgr.status_line()}")
             return
 
-        if lower == "pause":
-            state = mgr.pause(reason="user-paused")
+        if lower in {"trace json", "trace --json"}:
+            _cprint(mgr.render_trace_json())
+            return
+
+        if lower == "trace":
+            _cprint(mgr.render_trace())
+            return
+
+        if lower == "pause" or lower.startswith("pause "):
+            reason = arg[5:].strip() or "user-paused"
+            state = mgr.pause(reason=reason)
             if state is None:
-                _cprint(f"  {_DIM}No goal set.{_RST}")
+                _cprint(f"  {_DIM}No goal to pause.{_RST}")
             else:
                 _cprint(f"  ⏸ Goal paused: {state.goal}")
             return
@@ -9500,7 +9545,15 @@ class HermesCLI:
                 )
             return
 
-        if lower in {"clear", "stop", "done"}:
+        if lower == "done":
+            state = mgr.mark_done("marked done by user")
+            if state is None:
+                _cprint(f"  {_DIM}No active goal.{_RST}")
+            else:
+                _cprint(f"  ✓ Goal marked done: {state.goal}")
+            return
+
+        if lower in {"clear", "stop"}:
             had = mgr.has_goal()
             mgr.clear()
             if had:
@@ -9533,16 +9586,14 @@ class HermesCLI:
         """Dispatch /subgoal subcommands.
 
         Forms:
-          /subgoal                              show current subgoals
-          /subgoal <text>                       append a criterion
-          /subgoal remove <n>                   drop subgoal n (1-based)
-          /subgoal clear                        wipe all subgoals
+          /subgoal                              show current checklist
+          /subgoal <text>                       append a user checklist item
+          /subgoal remove <n>                   drop checklist item n (1-based)
+          /subgoal clear                        wipe checklist and re-decompose next turn
 
-        Subgoals are extra criteria the user adds mid-loop. They get
-        appended to both the judge prompt (verdict must consider them)
-        and the continuation prompt (agent sees them) on the next turn
-        boundary. No special kick — the running turn finishes, the next
-        judge call includes them.
+        In the checklist-based goal system, subgoals are user-added checklist
+        items. They are durable, visible to the judge, and can be removed by
+        the user without giving any external integration completion authority.
         """
         parts = (cmd or "").strip().split(None, 2)
         arg = " ".join(parts[1:]).strip() if len(parts) > 1 else ""
@@ -9559,7 +9610,7 @@ class HermesCLI:
         # No args → list current subgoals.
         if not arg:
             _cprint(f"  {mgr.status_line()}")
-            _cprint(f"  {mgr.render_subgoals()}")
+            _cprint(f"  {mgr.render_checklist()}")
             return
 
         tokens = arg.split(None, 1)
@@ -9580,12 +9631,14 @@ class HermesCLI:
             except (IndexError, RuntimeError) as exc:
                 _cprint(f"  /subgoal remove: {exc}")
                 return
-            _cprint(f"  ✓ Removed subgoal {idx}: {removed}")
+            removed_text = getattr(removed, "text", str(removed))
+            _cprint(f"  ✓ Removed subgoal {idx}: {removed_text}")
             return
 
         if verb == "clear":
             try:
-                prev = mgr.clear_subgoals()
+                prev = len(mgr.state.checklist) if mgr.state else 0
+                mgr.clear_checklist()
             except RuntimeError as exc:
                 _cprint(f"  /subgoal clear: {exc}")
                 return
@@ -9597,12 +9650,12 @@ class HermesCLI:
 
         # Otherwise — append the whole arg as a new subgoal.
         try:
-            text = mgr.add_subgoal(arg)
+            item = mgr.add_subgoal(arg)
         except (ValueError, RuntimeError) as exc:
             _cprint(f"  /subgoal: {exc}")
             return
-        idx = len(mgr.state.subgoals) if mgr.state else 0
-        _cprint(f"  ✓ Added subgoal {idx}: {text}")
+        idx = len(mgr.state.checklist) if mgr.state else 0
+        _cprint(f"  ✓ Added subgoal {idx}: {item.text}")
 
     def _maybe_continue_goal_after_turn(self) -> None:
         """Hook run after every CLI turn. Judges + maybe re-queues.
@@ -9707,7 +9760,7 @@ class HermesCLI:
         if not last_response.strip():
             return
 
-        decision = mgr.evaluate_after_turn(last_response, user_initiated=True)
+        decision = mgr.evaluate_after_turn(last_response, user_initiated=True, messages=self.conversation_history)
         msg = decision.get("message") or ""
         if msg:
             _cprint(f"  {msg}")
@@ -9716,7 +9769,7 @@ class HermesCLI:
             prompt = decision.get("continuation_prompt")
             if prompt:
                 try:
-                    self._pending_input.put(prompt)
+                    self._pending_input.put(f"[system] {prompt}")
                 except Exception as exc:
                     logging.debug("goal continuation enqueue failed: %s", exc)
 

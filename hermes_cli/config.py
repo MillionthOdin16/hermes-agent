@@ -1250,6 +1250,27 @@ DEFAULT_CONFIG = {
             "timeout": 60,
             "extra_body": {},
         },
+        # Goal judge — evaluates /goal checklist progress and completion.
+        # Needs enough instruction-following reliability to return strict JSON.
+        "goal_judge": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 60,
+            "extra_body": {},
+        },
+        # Goal planner — generates focused next-step continuation prompts
+        # after the judge evaluates progress. Cheaper/faster models are fine;
+        # this emits plain text and fails open to the static template.
+        "goal_planner": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 15,
+            "extra_body": {},
+        },
         # Curator — skill-usage review fork. Timeout is generous because the
         # review pass can take several minutes on reasoning models (umbrella
         # building over hundreds of candidate skills). "auto" = use main chat
@@ -1587,6 +1608,13 @@ DEFAULT_CONFIG = {
     # budget is exhausted, or the user pauses/clears it. Judge failures
     # fail OPEN (continue) so a flaky judge never wedges progress — the
     # turn budget is the real backstop.
+    #
+    # Continuation planner (Phase-C): when a checklist exists, a second
+    # lightweight call generates a focused next-step instruction instead
+    # of the generic "continue working" template.  Configure the planner
+    # model under auxiliary.goal_planner (same pattern as goal_judge).
+    # Falls back to the existing template when the planner is unavailable
+    # or returns an error.
     "goals": {
         # Max continuation turns before Hermes auto-pauses the goal and
         # asks the user to /goal resume. Protects against judge false
