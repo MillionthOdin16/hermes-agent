@@ -2183,8 +2183,14 @@ def copy_reasoning_content_for_api(agent, source_msg: dict, api_msg: dict) -> No
             api_msg.pop("reasoning_content", None)
         elif existing == "":
             api_msg["reasoning_content"] = " "
-        else:
+        elif needs_thinking_pad:
             api_msg["reasoning_content"] = existing
+        else:
+            # Most providers do not require or accept replayed reasoning text.
+            # Keeping it in persisted transcripts is useful for UI/debugging,
+            # but sending it back on every later request can multiply prompt
+            # tokens in long reasoning-heavy sessions.
+            api_msg.pop("reasoning_content", None)
         return
 
     # 2. Cross-provider poisoned history (#15748): on DeepSeek/Kimi,
