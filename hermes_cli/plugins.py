@@ -142,6 +142,10 @@ VALID_HOOKS: Set[str] = {
     "on_session_finalize",
     "on_session_reset",
     "subagent_stop",
+    # Goal evidence producers are observer-only. They may return bounded
+    # evidence payloads for the goal ledger, but they do not get completion
+    # authority.
+    "goal_external_evidence",
     # Gateway pre-dispatch hook. Fired once per incoming MessageEvent
     # after the internal-event guard but BEFORE auth/pairing and agent
     # dispatch. Plugins may return a dict to influence flow:
