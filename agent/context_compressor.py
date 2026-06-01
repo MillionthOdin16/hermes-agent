@@ -569,10 +569,10 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.context_length = context_length
-        self.threshold_tokens = max(
-            int(context_length * self.threshold_percent),
-            MINIMUM_CONTEXT_LENGTH,
-        )
+        threshold = int(context_length * self.threshold_percent)
+        if self.threshold_tokens_cap > 0:
+            threshold = min(threshold, self.threshold_tokens_cap)
+        self.threshold_tokens = max(threshold, MINIMUM_CONTEXT_LENGTH)
         # Recalculate token budgets for the new context length so the
         # compressor stays calibrated after a model switch (e.g. 200K → 32K).
         target_tokens = int(self.threshold_tokens * self.summary_target_ratio)
@@ -596,6 +596,7 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        threshold_tokens_cap: int = 0,
     ):
         self.model = model
         self.base_url = base_url
@@ -603,6 +604,7 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.threshold_percent = threshold_percent
+        self.threshold_tokens_cap = threshold_tokens_cap
         self.protect_first_n = protect_first_n
         self.protect_last_n = protect_last_n
         self.summary_target_ratio = max(0.10, min(summary_target_ratio, 0.80))
