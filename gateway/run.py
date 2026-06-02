@@ -9111,13 +9111,6 @@ class GatewayRunner:
                                     self.session_store.rewrite_transcript(
                                         session_entry.session_id, _compressed
                                     )
-                                            source, session_entry,
-                                            reason="hygiene-compression",
-                                        )
-
-                                    self.session_store.rewrite_transcript(
-                                        session_entry.session_id, _compressed
-                                    )
                                     # Reset stored token count — transcript was rewritten
                                     session_entry.last_prompt_tokens = 0
                                     history = _compressed

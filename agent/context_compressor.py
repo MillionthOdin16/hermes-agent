@@ -2042,7 +2042,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             )
 
         continuity_anchor = self._build_continuity_anchor(messages[compress_end:])
-        if continuity_anchor and "## Current Continuity Anchor" not in summary:
+        if summary and continuity_anchor and "## Current Continuity Anchor" not in summary:
             summary = summary.rstrip() + "\n\n" + continuity_anchor
 
         _merge_summary_into_tail = False
