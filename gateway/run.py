@@ -2461,6 +2461,45 @@ class GatewayRunner:
                 "telegram topic binding refresh failed (%s)", reason, exc_info=True,
             )
 
+    def _persist_gateway_session_rollover(
+        self,
+        *,
+        session_key: str | None,
+        source: SessionSource,
+        session_entry,
+        new_session_id: str,
+        reason: str,
+    ) -> bool:
+        """Persist all gateway state that follows a compression child session."""
+        old_session_id = getattr(session_entry, "session_id", None)
+        if not old_session_id or not new_session_id or old_session_id == new_session_id:
+            return False
+
+        session_entry.session_id = new_session_id
+        self.session_store._save()
+        self._sync_telegram_topic_binding(source, session_entry, reason=reason)
+
+        try:
+            from hermes_cli.goals import migrate_goal_session
+            migrate_goal_session(old_session_id, new_session_id, reason=reason)
+        except Exception:
+            logger.debug(
+                "goal migration failed during session rollover (%s): %s -> %s",
+                reason, old_session_id, new_session_id, exc_info=True,
+            )
+
+        _cache_lock = getattr(self, "_agent_cache_lock", None)
+        _cache = getattr(self, "_agent_cache", None)
+        if session_key and _cache_lock and _cache is not None:
+            with _cache_lock:
+                cached = _cache.get(session_key)
+                cached_agent = cached[0] if cached else None
+                cached_session_id = getattr(cached_agent, "session_id", None)
+                if cached_session_id and cached_session_id != new_session_id:
+                    _cache.pop(session_key, None)
+
+        return True
+
     def _recover_telegram_topic_thread_id(
         self,
         source: SessionSource,
@@ -9103,10 +9142,11 @@ class GatewayRunner:
                                     # and searchable via session_search.
                                     _hyg_new_sid = _hyg_agent.session_id
                                     if _hyg_new_sid != session_entry.session_id:
-                                        session_entry.session_id = _hyg_new_sid
-                                        self.session_store._save()
-                                        self._sync_telegram_topic_binding(
-                                            source, session_entry,
+                                        self._persist_gateway_session_rollover(
+                                            session_key=session_key,
+                                            source=source,
+                                            session_entry=session_entry,
+                                            new_session_id=_hyg_new_sid,
                                             reason="hygiene-compression",
                                         )
 
@@ -9372,10 +9412,12 @@ class GatewayRunner:
             # If the agent's session_id changed during compression, update
             # session_entry so transcript writes below go to the right session.
             if agent_result.get("session_id") and agent_result["session_id"] != session_entry.session_id:
-                session_entry.session_id = agent_result["session_id"]
-                self.session_store._save()
-                self._sync_telegram_topic_binding(
-                    source, session_entry, reason="agent-result-compression",
+                self._persist_gateway_session_rollover(
+                    session_key=session_key,
+                    source=source,
+                    session_entry=session_entry,
+                    new_session_id=agent_result["session_id"],
+                    reason="agent-result-compression",
                 )
 
             # Prepend reasoning/thinking if display is enabled (per-platform)
@@ -12974,10 +13016,12 @@ class GatewayRunner:
                 # into the NEW session so the original history stays searchable.
                 new_session_id = tmp_agent.session_id
                 if new_session_id != session_entry.session_id:
-                    session_entry.session_id = new_session_id
-                    self.session_store._save()
-                    self._sync_telegram_topic_binding(
-                        source, session_entry, reason="compress-command",
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=session_entry,
+                        new_session_id=new_session_id,
+                        reason="compress-command",
                     )
 
                 self.session_store.rewrite_transcript(new_session_id, compressed)
@@ -17542,16 +17586,29 @@ class GatewayRunner:
                 with _cache_lock:
                     cached = _cache.get(session_key)
                     if cached and cached[1] == _sig:
-                        agent = cached[0]
+                        cached_agent = cached[0]
+                        cached_session_id = getattr(cached_agent, "session_id", None)
+                        if cached_session_id and cached_session_id != session_id:
+                            logger.info(
+                                "Evicting cached agent for %s: cached session %s "
+                                "does not match active session %s",
+                                session_key,
+                                cached_session_id,
+                                session_id,
+                            )
+                            _cache.pop(session_key, None)
+                        else:
+                            agent = cached_agent
                         # Refresh LRU order so the cap enforcement evicts
                         # truly-oldest entries, not the one we just used.
-                        if hasattr(_cache, "move_to_end"):
+                        if agent is not None and hasattr(_cache, "move_to_end"):
                             try:
                                 _cache.move_to_end(session_key)
                             except KeyError:
                                 pass
-                        self._init_cached_agent_for_turn(agent, _interrupt_depth)
-                        logger.debug("Reusing cached agent for session %s", session_key)
+                        if agent is not None:
+                            self._init_cached_agent_for_turn(agent, _interrupt_depth)
+                            logger.debug("Reusing cached agent for session %s", session_key)
 
             if agent is None:
                 # Config changed or first message — create fresh agent
@@ -18104,8 +18161,13 @@ class GatewayRunner:
                 )
                 entry = self.session_store._entries.get(session_key)
                 if entry:
-                    entry.session_id = agent.session_id
-                    self.session_store._save()
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=entry,
+                        new_session_id=agent.session_id,
+                        reason="run-agent-compression",
+                    )
 
                 # If this is a Telegram DM and source.thread_id was lost during
                 # the session split (synthetic / recovered event), restore it
