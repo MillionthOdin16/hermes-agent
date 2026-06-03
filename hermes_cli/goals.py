@@ -87,6 +87,8 @@ _CONTINUATION_GOAL_MAX_CHARS = 4000
 _CONTINUATION_CHECKLIST_MAX_CHARS = 8000
 _CONTINUATION_FEEDBACK_MAX_CHARS = 4000
 _CONTINUATION_SUBGOALS_MAX_CHARS = 4000
+_JUDGE_CHECKLIST_MAX_CHARS = 12_000
+_PLANNER_CHECKLIST_MAX_CHARS = 8_000
 _GOAL_DUMP_STRIP_KEYS = frozenset({"reasoning", "reasoning_content", "reasoning_details"})
 _GOAL_DUMP_TOOL_CONTENT_MAX_CHARS = 24_000
 _GOAL_DUMP_ASSISTANT_CONTENT_MAX_CHARS = 16_000
@@ -2865,6 +2867,11 @@ def _bounded_continuation_text(text: str, limit: int, *, label: str) -> str:
     return _truncate_head_tail(str(text or ""), limit, label=label)
 
 
+def _bounded_prompt_block(text: str, limit: int, *, label: str) -> str:
+    """Bound repeated auxiliary prompt blocks while preserving head and tail."""
+    return _truncate_head_tail(str(text or ""), limit, label=label)
+
+
 # ---------------------------------------------------------------------------
 # M8: Event log helpers
 # ---------------------------------------------------------------------------
@@ -5436,7 +5443,11 @@ def plan_continuation(
         if item.evidence and item.status in TERMINAL_ITEM_STATUSES:
             line += f" ({item.evidence})"
         lines.append(line)
-    checklist_block = "\n".join(lines)
+    checklist_block = _bounded_prompt_block(
+        "\n".join(lines),
+        _PLANNER_CHECKLIST_MAX_CHARS,
+        label="planner checklist",
+    )
 
     cl_total, cl_done, cl_imp, _ = state.checklist_counts()
 
@@ -6158,7 +6169,11 @@ def evaluate_checklist(
         return ({"updates": [], "new_items": [], "reason": "auxiliary client unavailable"}, False)
 
     # Render checklist with 1-based indices the judge can address.
-    checklist_block = state.render_checklist(numbered=True)
+    checklist_block = _bounded_prompt_block(
+        state.render_checklist(numbered=True),
+        _JUDGE_CHECKLIST_MAX_CHARS,
+        label="judge checklist",
+    )
 
     # M6: Parse completion evidence and include summary in judge prompt.
     evidence = parse_completion_evidence(last_response)
