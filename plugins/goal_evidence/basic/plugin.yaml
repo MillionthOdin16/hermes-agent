@@ -1,0 +1,7 @@
+name: goal-evidence-basic
+version: 1.0.0
+description: "Observer-only goal evidence producer that extracts bounded verification summaries from final responses."
+author: "Hermes customizations"
+kind: backend
+hooks:
+  - goal_external_evidence
