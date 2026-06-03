@@ -91,6 +91,28 @@ class TestParseJudgeResponse:
 
 class TestJudgeGoal:
 
+<<<<<<< HEAD
+=======
+        verdict, _, _ = judge_goal("", "some response")
+        assert verdict == "skipped"
+
+    def test_empty_response_continues(self):
+        from hermes_cli.goals import judge_goal
+
+        verdict, _, _ = judge_goal("ship the thing", "")
+        assert verdict == "continue"
+
+    def test_no_aux_client_continues(self):
+        """Fail-open: if no aux client, we must return continue, not skipped/done."""
+        from hermes_cli import goals
+
+        with patch(
+            "agent.auxiliary_client.call_llm",
+            side_effect=RuntimeError("No LLM provider configured"),
+        ):
+            verdict, _, _ = goals.judge_goal("my goal", "my response")
+        assert verdict == "continue"
+>>>>>>> b3c69d3530 (patch 66-goal-system-test-fixes: repair against current custom stack)
 
     def test_api_error_continues(self):
         """Judge exception → fail-open continue (don't wedge progress on judge bugs)."""
@@ -107,16 +129,48 @@ class TestJudgeGoal:
     def test_judge_says_done(self):
         from hermes_cli import goals
 
+<<<<<<< HEAD
         with patch(
             "agent.auxiliary_client.call_llm",
             return_value=MagicMock(
                 choices=[MagicMock(message=MagicMock(content='{"done": true, "reason": "achieved"}'))]
             ),
+=======
+        fake_response = MagicMock()
+        fake_response.choices = [
+            MagicMock(
+                message=MagicMock(content='{"done": true, "reason": "achieved"}')
+            )
+        ]
+        with patch(
+            "agent.auxiliary_client.call_llm",
+            return_value=fake_response,
+>>>>>>> b3c69d3530 (patch 66-goal-system-test-fixes: repair against current custom stack)
         ):
             verdict, reason, _, _wd, _tf = goals.judge_goal("goal", "agent response")
         assert verdict == "done"
         assert reason == "achieved"
 
+<<<<<<< HEAD
+=======
+    def test_judge_says_continue(self):
+        from hermes_cli import goals
+
+        fake_response = MagicMock()
+        fake_response.choices = [
+            MagicMock(
+                message=MagicMock(content='{"done": false, "reason": "not yet"}')
+            )
+        ]
+        with patch(
+            "agent.auxiliary_client.call_llm",
+            return_value=fake_response,
+        ):
+            verdict, reason, _ = goals.judge_goal("goal", "agent response")
+        assert verdict == "continue"
+        assert reason == "not yet"
+
+>>>>>>> b3c69d3530 (patch 66-goal-system-test-fixes: repair against current custom stack)
 
 # ──────────────────────────────────────────────────────────────────────
 # GoalManager lifecycle + persistence
@@ -198,9 +252,17 @@ class TestJudgeParseFailureAutoPause:
         """Transient network/API errors must not trip the auto-pause guard."""
         from hermes_cli import goals
 
+<<<<<<< HEAD
         with patch(
             "agent.auxiliary_client.call_llm",
             side_effect=RuntimeError("connection reset"),
+=======
+        fake_response = MagicMock()
+        fake_response.choices = [MagicMock(message=MagicMock(content=""))]
+        with patch(
+            "agent.auxiliary_client.call_llm",
+            return_value=fake_response,
+>>>>>>> b3c69d3530 (patch 66-goal-system-test-fixes: repair against current custom stack)
         ):
             verdict, _, parse_failed, _wd, transport_failed = goals.judge_goal(
                 "goal", "response"

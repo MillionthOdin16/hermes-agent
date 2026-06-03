@@ -10,6 +10,8 @@ never saw verdicts. This test locks in the fix.
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -108,6 +110,7 @@ def _make_runner_with_adapter(session_id: str = None):
 async def _drain_until(condition, timeout=5.0):
     """Yield to the event loop until ``condition()`` is truthy (bounded).
 
+<<<<<<< HEAD
     The goal-continuation path finishes its sends/enqueues on spawned tasks;
     a fixed 0.05s sleep raced them on loaded CI runners (#88975). Returns as
     soon as the condition holds — the asserts after the call stay exact.
@@ -115,6 +118,51 @@ async def _drain_until(condition, timeout=5.0):
     deadline = asyncio.get_event_loop().time() + timeout
     while not condition() and asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(0.01)
+=======
+    from hermes_cli.goals import GoalManager, ChecklistItem, save_goal
+
+    mgr = GoalManager(session_entry.session_id)
+    state = mgr.set("ship the feature")
+    state.decomposed = True
+    state.checklist = [
+        ChecklistItem(
+            text="Ship the feature",
+            status="pending",
+            added_by="judge",
+            added_at=time.time(),
+        )
+    ]
+    save_goal(session_entry.session_id, state)
+
+    fake_resp = MagicMock()
+    fake_resp.choices = [
+        MagicMock(
+            message=MagicMock(
+                content=json.dumps({
+                    "updates": [{"index": 1, "status": "done", "reason": "the feature shipped"}],
+                    "new_items": [],
+                    "reason": "the feature shipped",
+                }),
+                tool_calls=[],
+            )
+        )
+    ]
+
+    with patch("agent.auxiliary_client.call_llm", return_value=fake_resp), \
+         patch("hermes_cli.goals._get_judge_client", return_value=(MagicMock(), "mock-model")):
+        await runner._post_turn_goal_continuation(
+            session_entry=session_entry,
+            source=src,
+            final_response="I shipped the feature.",
+        )
+        await asyncio.sleep(0.05)
+
+    assert len(adapter.sends) == 1, f"expected 1 send, got {len(adapter.sends)}: {adapter.sends}"
+    msg = adapter.sends[0]
+    assert msg["chat_id"] == "c1"
+    assert "Goal achieved" in msg["content"]
+    assert "the feature shipped" in msg["content"]
+>>>>>>> b3c69d3530 (patch 66-goal-system-test-fixes: repair against current custom stack)
 
 
 @pytest.mark.asyncio
@@ -125,12 +173,47 @@ async def test_goal_verdict_continue_enqueues_continuation(hermes_home):
     proceeds on the next turn."""
     runner, adapter, session_entry, src = _make_runner_with_adapter()
 
+<<<<<<< HEAD
     from hermes_cli.goals import GoalManager
 
     mgr = GoalManager(session_entry.session_id)
     mgr.set("polish the docs")
 
     with patch("hermes_cli.goals.judge_goal", return_value=("continue", "still needs work", False, None, False)):
+=======
+    from hermes_cli.goals import GoalManager, save_goal, ChecklistItem, ITEM_PENDING, ADDED_BY_JUDGE
+
+    mgr = GoalManager(session_entry.session_id)
+    state = mgr.set("polish the docs")
+    state.decomposed = True
+    state.checklist = [
+        ChecklistItem(
+            text="Polish the docs",
+            status=ITEM_PENDING,
+            added_by=ADDED_BY_JUDGE,
+            added_at=time.time(),
+        ),
+    ]
+    save_goal(session_entry.session_id, state)
+
+    continue_resp = MagicMock()
+    continue_resp.choices = [
+        MagicMock(
+            message=MagicMock(
+                content=json.dumps({
+                    "updates": [],
+                    "pending_reasons": [{"index": 1, "rejection_reason": "still needs work"}],
+                    "new_items": [],
+                    "reason": "not enough progress",
+                }),
+                tool_calls=[],
+            )
+        )
+    ]
+
+    with patch("agent.auxiliary_client.call_llm", return_value=continue_resp), \
+         patch("hermes_cli.goals._get_judge_client", return_value=(MagicMock(), "mock-model")):
+>>>>>>> b3c69d3530 (patch 66-goal-system-test-fixes: repair against current custom stack)
         await runner._post_turn_goal_continuation(
             session_entry=session_entry,
             source=src,

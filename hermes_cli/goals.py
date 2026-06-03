@@ -2069,7 +2069,7 @@ class GoalManager:
                     "      model: google/gemini-3-flash-preview\n"
                     "Then /goal resume to continue."
                 ),
-            }
+            )
 
         if state.turns_used >= state.max_turns:
             state.status = "paused"
