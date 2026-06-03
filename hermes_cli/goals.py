@@ -87,6 +87,10 @@ _CONTINUATION_GOAL_MAX_CHARS = 4000
 _CONTINUATION_CHECKLIST_MAX_CHARS = 8000
 _CONTINUATION_FEEDBACK_MAX_CHARS = 4000
 _CONTINUATION_SUBGOALS_MAX_CHARS = 4000
+_GOAL_DUMP_STRIP_KEYS = frozenset({"reasoning", "reasoning_content", "reasoning_details"})
+_GOAL_DUMP_TOOL_CONTENT_MAX_CHARS = 24_000
+_GOAL_DUMP_ASSISTANT_CONTENT_MAX_CHARS = 16_000
+_GOAL_DUMP_TOOL_ARGS_MAX_CHARS = 4_000
 
 
 # Status constants ────────────────────────────────────────────────────
@@ -2730,6 +2734,77 @@ def conversation_dump_path(session_id: str) -> Optional[Path]:
     return base / f"{_safe_session_filename(session_id)}.json"
 
 
+def _head_tail_for_goal_dump(text: str, limit: int, *, label: str) -> str:
+    if len(text) <= limit:
+        return text
+    marker = (
+        f"\n\n[... middle of {label} truncated in goal judge history dump; "
+        "use the live session transcript or tool artifact for full content ...]\n\n"
+    )
+    if limit <= len(marker) + 40:
+        return text[:limit]
+    remaining = limit - len(marker)
+    head = remaining // 2
+    tail = remaining - head
+    return f"{text[:head]}{marker}{text[-tail:]}"
+
+
+def _sanitize_for_goal_dump(value: Any) -> Any:
+    """Remove provider-private reasoning fields from judge history dumps."""
+    if isinstance(value, dict):
+        return {
+            str(k): _sanitize_for_goal_dump(v)
+            for k, v in value.items()
+            if str(k) not in _GOAL_DUMP_STRIP_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_for_goal_dump(v) for v in value]
+    return value
+
+
+def _sanitize_messages_for_goal_dump(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return a bounded judge-history dump without hidden reasoning payloads."""
+    sanitized: List[Dict[str, Any]] = []
+    for raw_msg in messages:
+        clean = _sanitize_for_goal_dump(raw_msg)
+        if not isinstance(clean, dict):
+            sanitized.append({"role": "unknown", "content": str(clean)})
+            continue
+
+        role = str(clean.get("role") or "")
+        content = clean.get("content")
+        if isinstance(content, str):
+            if role == "tool":
+                clean["content"] = _head_tail_for_goal_dump(
+                    content,
+                    _GOAL_DUMP_TOOL_CONTENT_MAX_CHARS,
+                    label=f"tool result {clean.get('name') or clean.get('tool_name') or ''}".strip(),
+                )
+            elif role == "assistant":
+                clean["content"] = _head_tail_for_goal_dump(
+                    content,
+                    _GOAL_DUMP_ASSISTANT_CONTENT_MAX_CHARS,
+                    label="assistant message",
+                )
+
+        for tool_call in clean.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                continue
+            args = function.get("arguments")
+            if isinstance(args, str):
+                function["arguments"] = _head_tail_for_goal_dump(
+                    args,
+                    _GOAL_DUMP_TOOL_ARGS_MAX_CHARS,
+                    label="tool arguments",
+                )
+
+        sanitized.append(clean)
+    return sanitized
+
+
 def dump_conversation(session_id: str, messages: List[Dict[str, Any]]) -> Optional[Path]:
     """Write ``messages`` to the goals/ dump file. Returns the path on success."""
     if not session_id or not messages:
@@ -2741,7 +2816,13 @@ def dump_conversation(session_id: str, messages: List[Dict[str, Any]]) -> Option
         # Best-effort: messages may contain non-JSON-serializable objects from
         # provider-specific adapter shims. Fall through with default=str.
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump(messages, fh, ensure_ascii=False, indent=2, default=str)
+            json.dump(
+                _sanitize_messages_for_goal_dump(messages),
+                fh,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
         return path
     except Exception as exc:
         logger.debug("dump_conversation: write failed: %s", exc)
