@@ -35,6 +35,9 @@ DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
 SCHEMA_VERSION = 14
 
+# Goal persistence v2 redirect cap.
+MAX_GOAL_SESSION_REDIRECTS = 5
+
 # ---------------------------------------------------------------------------
 # WAL-compatibility fallback
 # ---------------------------------------------------------------------------
@@ -301,6 +304,52 @@ CREATE TABLE IF NOT EXISTS compression_locks (
     expires_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS goal_legacy_migrations (
+    legacy_key TEXT PRIMARY KEY,
+    goal_id TEXT NOT NULL,
+    migrated_at REAL NOT NULL DEFAULT 0.0,
+    source TEXT NOT NULL DEFAULT 'unknown'
+);
+
+CREATE TABLE IF NOT EXISTS goals (
+    goal_id TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    goal_text TEXT NOT NULL DEFAULT '',
+    state_json TEXT NOT NULL DEFAULT '{}',
+    source TEXT DEFAULT 'unknown',
+    created_at REAL NOT NULL DEFAULT 0.0,
+    updated_at REAL NOT NULL DEFAULT 0.0,
+    completed_at REAL,
+    archived_at REAL,
+    archived_reason TEXT,
+    session_key TEXT,
+    created_by TEXT NOT NULL DEFAULT 'human'
+);
+
+CREATE TABLE IF NOT EXISTS goal_sessions (
+    binding_id TEXT PRIMARY KEY,
+    goal_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    session_key TEXT,
+    started_at REAL NOT NULL DEFAULT 0.0,
+    ended_at REAL,
+    end_reason TEXT,
+    redirect_to TEXT,
+    updated_at REAL NOT NULL DEFAULT 0.0
+);
+
+CREATE TABLE IF NOT EXISTS goal_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id TEXT NOT NULL,
+    session_id TEXT,
+    session_key TEXT,
+    event_type TEXT NOT NULL,
+    event_data TEXT,
+    created_at REAL NOT NULL DEFAULT 0.0
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
@@ -373,6 +422,72 @@ END;
 """
 
 
+class Transaction:
+    """Re-entrant SQLite savepoint transaction helper."""
+
+    _savepoint_counter = 0
+
+    def __init__(self, conn: sqlite3.Connection, lock: threading.RLock):
+        self._conn = conn
+        self._lock = lock
+        self._savepoint: Optional[str] = None
+        self._rolled_back = False
+
+    def __enter__(self) -> "Transaction":
+        with self._lock:
+            Transaction._savepoint_counter += 1
+            self._savepoint = f"_hermes_sp_{Transaction._savepoint_counter}"
+            self._conn.execute(f"SAVEPOINT {self._savepoint}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        if self._savepoint is None:
+            return False
+        with self._lock:
+            if exc_type is not None or self._rolled_back:
+                self._conn.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
+            self._conn.execute(f"RELEASE SAVEPOINT {self._savepoint}")
+            self._savepoint = None
+        return False
+
+    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        return self._conn.execute(sql, params)
+
+    def executemany(self, sql: str, params) -> sqlite3.Cursor:
+        return self._conn.executemany(sql, params)
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        return self._conn.executescript(sql_script)
+
+    def rollback(self) -> None:
+        if self._savepoint and not self._rolled_back:
+            with self._lock:
+                self._conn.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
+                self._rolled_back = True
+
+
+def _create_goal_indexes(cursor) -> None:
+    """Create goal persistence indexes after table reconciliation."""
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_goal_per_session "
+        "ON goal_sessions(session_id) WHERE ended_at IS NULL AND redirect_to IS NULL"
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_binding_per_goal "
+        "ON goal_sessions(goal_id) WHERE ended_at IS NULL AND redirect_to IS NULL"
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_sessions_goal ON goal_sessions(goal_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_sessions_session ON goal_sessions(session_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_events_goal ON goal_events(goal_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_events_session ON goal_events(session_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goal_events_type ON goal_events(event_type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_created ON goals(created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_source ON goals(source)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_session_key ON goals(session_key)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_updated_at ON goals(updated_at DESC)")
+
+
 class SessionDB:
     """
     SQLite-backed session storage with FTS5 search.
@@ -400,7 +515,7 @@ class SessionDB:
         self.db_path = db_path or DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._write_count = 0
         self._fts_enabled = False
         self._fts_unavailable_warned = False
@@ -437,6 +552,10 @@ class SessionDB:
             # ``hermes_state._set_last_init_error(None)`` explicitly.
             _set_last_init_error(f"{type(exc).__name__}: {exc}")
             raise
+
+    def transaction(self) -> Transaction:
+        """Return a savepoint-based transaction context manager."""
+        return Transaction(self._conn, self._lock)
 
     # ── Core write helper ──
 
@@ -757,6 +876,7 @@ class SessionDB:
         # Deferred indexes that reference the reconciler-added ``active``
         # column (idx_messages_session_active) — same ordering constraint.
         cursor.executescript(DEFERRED_INDEX_SQL)
+        _create_goal_indexes(cursor)
 
         fts5_available = self._sqlite_supports_fts5(cursor)
         fts_migrations_complete = True
