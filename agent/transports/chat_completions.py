@@ -17,6 +17,7 @@ from agent.moonshot_schema import is_moonshot_model, sanitize_moonshot_tools
 from agent.prompt_builder import DEVELOPER_ROLE_MODELS
 from agent.transports.base import ProviderTransport
 from agent.transports.types import NormalizedResponse, ToolCall, Usage
+from utils import base_url_host_matches
 
 
 def _build_gemini_thinking_config(model: str, reasoning_config: dict | None) -> dict | None:
@@ -115,6 +116,16 @@ def _model_consumes_thought_signature(model: Any) -> bool:
     return "gemini" in m or "gemma" in m
 
 
+def _should_preserve_reasoning_details_for_chat(**kwargs) -> bool:
+    """Only OpenRouter's chat-completions API owns reasoning_details replay."""
+    if kwargs.get("is_openrouter"):
+        return True
+    provider_name = str(kwargs.get("provider_name") or "").strip().lower()
+    if provider_name == "openrouter":
+        return True
+    return base_url_host_matches(str(kwargs.get("base_url") or ""), "openrouter.ai")
+
+
 class ChatCompletionsTransport(ProviderTransport):
     """Transport for api_mode='chat_completions'.
 
@@ -164,6 +175,7 @@ class ChatCompletionsTransport(ProviderTransport):
         strip_extra_content = not _model_consumes_thought_signature(
             kwargs.get("model")
         )
+        keep_reasoning_details = _should_preserve_reasoning_details_for_chat(**kwargs)
         needs_sanitize = False
         for msg in messages:
             if not isinstance(msg, dict):
@@ -173,6 +185,7 @@ class ChatCompletionsTransport(ProviderTransport):
                 or "codex_message_items" in msg
                 or "tool_name" in msg
                 or "timestamp" in msg  # #47868 — strict providers reject this
+                or ("reasoning_details" in msg and not keep_reasoning_details)
             ):
                 needs_sanitize = True
                 break
@@ -203,6 +216,8 @@ class ChatCompletionsTransport(ProviderTransport):
             msg.pop("codex_message_items", None)
             msg.pop("tool_name", None)
             msg.pop("timestamp", None)  # #47868 — leak into strict providers
+            if not keep_reasoning_details:
+                msg.pop("reasoning_details", None)
             # Drop all Hermes-internal scaffolding markers (``_``-prefixed).
             # OpenAI's message schema has no ``_``-prefixed fields, so this
             # is safe and future-proofs against new markers being added.
@@ -276,7 +291,13 @@ class ChatCompletionsTransport(ProviderTransport):
         # Codex sanitization: drop reasoning_items / call_id / response_item_id.
         # Pass model so the Gemini thought_signature (extra_content) is kept for
         # Gemini targets and stripped for strict non-Gemini providers.
-        sanitized = self.convert_messages(messages, model=model)
+        sanitized = self.convert_messages(
+            messages,
+            model=model,
+            base_url=params.get("base_url"),
+            is_openrouter=params.get("is_openrouter"),
+            provider_name=params.get("provider_name"),
+        )
 
         # ── Provider profile: single-path when present ──────────────────
         _profile = params.get("provider_profile")

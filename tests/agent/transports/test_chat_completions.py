@@ -161,6 +161,22 @@ class TestChatCompletionsBasic:
         ]
         assert transport.convert_messages(msgs) is msgs
 
+    def test_convert_messages_strips_reasoning_details_for_non_openrouter(self, transport):
+        msgs = [
+            {"role": "assistant", "content": "ok",
+             "reasoning_details": [{"type": "thinking", "thinking": "large hidden trace"}]},
+        ]
+        result = transport.convert_messages(msgs, base_url="https://api.example.com/v1")
+        assert "reasoning_details" not in result[0]
+        assert "reasoning_details" in msgs[0]
+
+    def test_convert_messages_preserves_reasoning_details_for_openrouter(self, transport):
+        details = [{"type": "thinking", "thinking": "signed provider state"}]
+        msgs = [{"role": "assistant", "content": "ok", "reasoning_details": details}]
+        result = transport.convert_messages(msgs, base_url="https://openrouter.ai/api/v1")
+        assert result is msgs
+        assert result[0]["reasoning_details"] == details
+
 
 class TestChatCompletionsBuildKwargs:
 
