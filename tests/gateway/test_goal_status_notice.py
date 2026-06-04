@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -34,7 +35,7 @@ class FakeAdapter:
 
 def _goal_continuation_event(source, goal="finish the task"):
     return MessageEvent(
-        text=CONTINUATION_PROMPT_TEMPLATE.format(goal=goal),
+        text=CONTINUATION_PROMPT_TEMPLATE.format(goal=goal, session_id="test-session"),
         message_type=MessageType.TEXT,
         source=source,
     )
@@ -145,3 +146,123 @@ def test_clear_goal_pending_continuations_removes_slot_and_overflow_only():
     assert removed == 2
     assert adapter._pending_messages.get(session_key) is None
     assert runner._queued_events[session_key] == [normal_event]
+
+
+def test_clear_goal_pending_continuations_handles_system_prefixed_events():
+    """Gateway queues continuations with a system prefix; cleanup must still detect them."""
+    runner = GatewayRunner.__new__(GatewayRunner)
+    adapter = FakeAdapter()
+    adapter._pending_messages = {}
+    runner._queued_events = {}
+
+    source = SessionSource(
+        platform=Platform.DISCORD,
+        chat_id="parent-channel",
+        thread_id="thread-123",
+    )
+    session_key = "discord:parent-channel:thread-123"
+    continuation = _goal_continuation_event(source)
+    continuation.text = f"[system] {continuation.text}"
+
+    adapter._pending_messages[session_key] = continuation
+
+    removed = runner._clear_goal_pending_continuations(session_key, adapter)
+
+    assert removed == 1
+    assert adapter._pending_messages == {}
+
+
+@pytest.mark.asyncio
+async def test_goal_pause_with_reason_pauses_existing_goal():
+    """Regression: /goal pause <reason> must not become a new goal."""
+    from hermes_cli.goals import GoalManager
+
+    runner = GatewayRunner.__new__(GatewayRunner)
+    adapter = FakeAdapter()
+    adapter._pending_messages = {}
+    runner.adapters = {Platform.DISCORD: adapter}
+    runner._queued_events = {}
+    runner.config = {}
+    session_entry = SimpleNamespace(session_id="gateway-goal-pause-reason")
+    runner.session_store = SimpleNamespace(get_or_create_session=lambda source: session_entry)
+
+    GoalManager(session_entry.session_id).set("existing gateway goal")
+    source = SessionSource(platform=Platform.DISCORD, chat_id="channel-1", thread_id="thread-1")
+    event = MessageEvent(
+        text="/goal pause waiting for user",
+        message_type=MessageType.TEXT,
+        source=source,
+    )
+
+    result = await runner._handle_goal_command(event)
+
+    state = GoalManager(session_entry.session_id).state
+    assert "paused" in result.lower()
+    assert state.status == "paused"
+    assert state.paused_reason == "waiting for user"
+    assert state.goal == "existing gateway goal"
+
+
+@pytest.mark.asyncio
+async def test_goal_trace_returns_read_only_diagnostic():
+    from hermes_cli.goals import GoalManager
+
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner.adapters = {}
+    runner._queued_events = {}
+    runner.config = {}
+    session_entry = SimpleNamespace(session_id="gateway-goal-trace")
+    runner.session_store = SimpleNamespace(get_or_create_session=lambda source: session_entry)
+
+    mgr = GoalManager(session_entry.session_id)
+    state = mgr.set("existing gateway goal")
+    state.decomposition_scope = "medium"
+    state.decomposition_item_bounds = {"min_items": 5, "max_items": 12}
+    from hermes_cli.goals import save_goal
+
+    save_goal(session_entry.session_id, state)
+    source = SessionSource(platform=Platform.DISCORD, chat_id="channel-1", thread_id="thread-1")
+    event = MessageEvent(
+        text="/goal trace",
+        message_type=MessageType.TEXT,
+        source=source,
+    )
+
+    result = await runner._handle_goal_command(event)
+
+    assert "Goal trace" in result
+    assert "session_id: gateway-goal-trace" in result
+    assert "scope: medium" in result
+    assert GoalManager(session_entry.session_id).state.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_goal_trace_json_returns_structured_diagnostic():
+    from hermes_cli.goals import GoalManager, save_goal
+
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner.adapters = {}
+    runner._queued_events = {}
+    runner.config = {}
+    session_entry = SimpleNamespace(session_id="gateway-goal-trace-json")
+    runner.session_store = SimpleNamespace(get_or_create_session=lambda source: session_entry)
+
+    mgr = GoalManager(session_entry.session_id)
+    state = mgr.set("existing gateway goal")
+    state.decomposition_scope = "medium"
+    state.decomposition_item_bounds = {"min_items": 5, "max_items": 12}
+    save_goal(session_entry.session_id, state)
+    source = SessionSource(platform=Platform.DISCORD, chat_id="channel-1", thread_id="thread-1")
+    event = MessageEvent(
+        text="/goal trace json",
+        message_type=MessageType.TEXT,
+        source=source,
+    )
+
+    result = await runner._handle_goal_command(event)
+    trace = json.loads(result)
+
+    assert trace["session_id"] == "gateway-goal-trace-json"
+    assert trace["scope"] == "medium"
+    assert trace["bounds"] == {"min_items": 5, "max_items": 12}
+    assert GoalManager(session_entry.session_id).state.status == "active"
