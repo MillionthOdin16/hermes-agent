@@ -6036,9 +6036,13 @@ def _(rid, params: dict) -> dict:
         lower = arg.strip().lower()
         if not arg.strip() or lower == "status":
             return _ok(rid, {"type": "exec", "output": mgr.status_line()})
-        if lower == "pause":
-            state = mgr.pause(reason="user-paused")
+        if lower == "pause" or lower.startswith("pause "):
+            reason = arg[5:].strip() or "user-paused"
+            state = mgr.pause(reason=reason)
             out = "No goal set." if state is None else f"⏸ Goal paused: {state.goal}"
+            return _ok(rid, {"type": "exec", "output": out})
+        if lower == "trace" or lower in {"trace json", "trace --json"}:
+            out = mgr.render_trace_json() if lower in {"trace json", "trace --json"} else mgr.render_trace()
             return _ok(rid, {"type": "exec", "output": out})
         if lower == "resume":
             state = mgr.resume()
