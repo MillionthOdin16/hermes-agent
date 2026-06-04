@@ -10,6 +10,8 @@ never saw verdicts. This test locks in the fix.
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -104,20 +106,42 @@ async def test_goal_verdict_done_sent_via_adapter_send(hermes_home):
     the user through the adapter's ``send()`` method."""
     runner, adapter, session_entry, src = _make_runner_with_adapter()
 
-    from hermes_cli.goals import GoalManager, save_goal
+    from hermes_cli.goals import GoalManager, ChecklistItem, save_goal
 
     mgr = GoalManager(session_entry.session_id)
     state = mgr.set("ship the feature")
     state.decomposed = True
+    state.checklist = [
+        ChecklistItem(
+            text="Ship the feature",
+            status="pending",
+            added_by="judge",
+            added_at=time.time(),
+        )
+    ]
     save_goal(session_entry.session_id, state)
 
-    with patch("hermes_cli.goals.judge_goal_freeform", return_value=("done", "the feature shipped", False)):
+    fake_resp = MagicMock()
+    fake_resp.choices = [
+        MagicMock(
+            message=MagicMock(
+                content=json.dumps({
+                    "updates": [{"index": 1, "status": "done", "reason": "the feature shipped"}],
+                    "new_items": [],
+                    "reason": "the feature shipped",
+                }),
+                tool_calls=[],
+            )
+        )
+    ]
+
+    with patch("agent.auxiliary_client.call_llm", return_value=fake_resp), \
+         patch("hermes_cli.goals._get_judge_client", return_value=(MagicMock(), "mock-model")):
         await runner._post_turn_goal_continuation(
             session_entry=session_entry,
             source=src,
             final_response="I shipped the feature.",
         )
-        # fire-and-forget create_task — give the loop a tick
         await asyncio.sleep(0.05)
 
     assert len(adapter.sends) == 1, f"expected 1 send, got {len(adapter.sends)}: {adapter.sends}"
@@ -135,14 +159,38 @@ async def test_goal_verdict_continue_enqueues_continuation(hermes_home):
     proceeds on the next turn."""
     runner, adapter, session_entry, src = _make_runner_with_adapter()
 
-    from hermes_cli.goals import GoalManager, save_goal
+    from hermes_cli.goals import GoalManager, save_goal, ChecklistItem, ITEM_PENDING, ADDED_BY_JUDGE
 
     mgr = GoalManager(session_entry.session_id)
     state = mgr.set("polish the docs")
     state.decomposed = True
+    state.checklist = [
+        ChecklistItem(
+            text="Polish the docs",
+            status=ITEM_PENDING,
+            added_by=ADDED_BY_JUDGE,
+            added_at=time.time(),
+        ),
+    ]
     save_goal(session_entry.session_id, state)
 
-    with patch("hermes_cli.goals.judge_goal_freeform", return_value=("continue", "still needs work", False)):
+    continue_resp = MagicMock()
+    continue_resp.choices = [
+        MagicMock(
+            message=MagicMock(
+                content=json.dumps({
+                    "updates": [],
+                    "pending_reasons": [{"index": 1, "rejection_reason": "still needs work"}],
+                    "new_items": [],
+                    "reason": "not enough progress",
+                }),
+                tool_calls=[],
+            )
+        )
+    ]
+
+    with patch("agent.auxiliary_client.call_llm", return_value=continue_resp), \
+         patch("hermes_cli.goals._get_judge_client", return_value=(MagicMock(), "mock-model")):
         await runner._post_turn_goal_continuation(
             session_entry=session_entry,
             source=src,

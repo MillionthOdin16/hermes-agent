@@ -139,8 +139,8 @@ class TestJudgeGoal:
         from hermes_cli import goals
 
         with patch(
-            "agent.auxiliary_client.get_text_auxiliary_client",
-            return_value=(None, None),
+            "agent.auxiliary_client.call_llm",
+            side_effect=RuntimeError("No LLM provider configured"),
         ):
             verdict, _, _ = goals.judge_goal("my goal", "my response")
         assert verdict == "continue"
@@ -149,11 +149,9 @@ class TestJudgeGoal:
         """Judge exception → fail-open continue (don't wedge progress on judge bugs)."""
         from hermes_cli import goals
 
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.side_effect = RuntimeError("boom")
         with patch(
-            "agent.auxiliary_client.get_text_auxiliary_client",
-            return_value=(fake_client, "judge-model"),
+            "agent.auxiliary_client.call_llm",
+            side_effect=RuntimeError("boom"),
         ):
             verdict, reason, _ = goals.judge_goal("goal", "response")
         assert verdict == "continue"
@@ -162,17 +160,15 @@ class TestJudgeGoal:
     def test_judge_says_done(self):
         from hermes_cli import goals
 
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = MagicMock(
-            choices=[
-                MagicMock(
-                    message=MagicMock(content='{"done": true, "reason": "achieved"}')
-                )
-            ]
-        )
+        fake_response = MagicMock()
+        fake_response.choices = [
+            MagicMock(
+                message=MagicMock(content='{"done": true, "reason": "achieved"}')
+            )
+        ]
         with patch(
-            "agent.auxiliary_client.get_text_auxiliary_client",
-            return_value=(fake_client, "judge-model"),
+            "agent.auxiliary_client.call_llm",
+            return_value=fake_response,
         ):
             verdict, reason, _ = goals.judge_goal("goal", "agent response")
         assert verdict == "done"
@@ -181,17 +177,15 @@ class TestJudgeGoal:
     def test_judge_says_continue(self):
         from hermes_cli import goals
 
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = MagicMock(
-            choices=[
-                MagicMock(
-                    message=MagicMock(content='{"done": false, "reason": "not yet"}')
-                )
-            ]
-        )
+        fake_response = MagicMock()
+        fake_response.choices = [
+            MagicMock(
+                message=MagicMock(content='{"done": false, "reason": "not yet"}')
+            )
+        ]
         with patch(
-            "agent.auxiliary_client.get_text_auxiliary_client",
-            return_value=(fake_client, "judge-model"),
+            "agent.auxiliary_client.call_llm",
+            return_value=fake_response,
         ):
             verdict, reason, _ = goals.judge_goal("goal", "agent response")
         assert verdict == "continue"
@@ -709,13 +703,11 @@ class TestParseFailureCounter:
         """End-to-end: judge returns empty content → parse_failed=True."""
         from hermes_cli import goals
 
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = MagicMock(
-            choices=[MagicMock(message=MagicMock(content=""))]
-        )
+        fake_response = MagicMock()
+        fake_response.choices = [MagicMock(message=MagicMock(content=""))]
         with patch(
-            "agent.auxiliary_client.get_text_auxiliary_client",
-            return_value=(fake_client, "judge-model"),
+            "agent.auxiliary_client.call_llm",
+            return_value=fake_response,
         ):
             verdict, _, parse_failed = goals.judge_goal("goal", "response")
         assert verdict == "continue"
