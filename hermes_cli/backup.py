@@ -17,6 +17,11 @@ import sys
 import tempfile
 import time
 import zipfile
+import tarfile
+try:
+    import zstandard
+except ImportError:
+    zstandard = None  # graceful fallback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -126,6 +131,95 @@ def _safe_copy_db(src: Path, dst: Path) -> bool:
         except Exception as exc2:
             logger.error("Raw copy also failed for %s: %s", src, exc2)
             return False
+
+
+def _vacuum_db(src: Path, dst: Path) -> bool:
+    """Create a compacted copy of a SQLite database via VACUUM INTO.
+
+    Defragments pages and reclaims free space. dst is created fresh.
+    Falls back to sqlite3.backup() if VACUUM INTO fails.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass  # read-only may fail, backup API handles WAL anyway
+        conn.execute("VACUUM main INTO ?", (str(dst),))
+        conn.close()
+        return True
+    except Exception as exc:
+        logger.warning("VACUUM INTO failed for %s: %s", src, exc)
+        try:
+            conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+            backup_conn = sqlite3.connect(str(dst))
+            conn.backup(backup_conn)
+            backup_conn.close()
+            conn.close()
+            return True
+        except Exception as exc2:
+            logger.error("Backup API also failed for %s: %s", src, exc2)
+            return False
+
+
+def _safe_copy_db_compressed(src: Path, dst_zst: Path) -> bool:
+    """Compact then compress a SQLite database to .db.zst.
+
+    Pipeline: VACUUM INTO temp -> zstd-3 stream compress -> delete temp.
+    Level 3 chosen for optimal speed/ratio tradeoff over level 9.
+    Caller is responsible for checking zstandard is not None before calling.
+    """
+    tmp = dst_zst.parent / f".{dst_zst.stem}.vacuum_tmp"
+    try:
+        if not _vacuum_db(src, tmp):
+            return False
+        cctx = zstandard.ZstdCompressor(level=3, threads=-1)
+        with open(tmp, "rb") as f_in, open(dst_zst, "wb") as f_out:
+            with cctx.stream_writer(f_out) as compressor:
+                shutil.copyfileobj(f_in, compressor, length=1024 * 1024)
+        return True
+    except Exception as exc:
+        logger.error("Compressed copy failed for %s: %s", src, exc)
+        dst_zst.unlink(missing_ok=True)
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _decompress_db_zst(src_zst: Path, dst: Path) -> bool:
+    """Decompress a .db.zst file to dst."""
+    if zstandard is None:
+        logger.error("zstandard not installed, cannot decompress .db.zst")
+        return False
+    tmp = dst.parent / f".{dst.name}.zst_restore"
+    try:
+        dctx = zstandard.ZstdDecompressor()
+        with open(src_zst, "rb") as f_in, open(tmp, "wb") as f_out:
+            dctx.copy_stream(f_in, f_out)
+        dst.unlink(missing_ok=True)
+        shutil.move(str(tmp), str(dst))
+        return True
+    except Exception as exc:
+        logger.error("Decompress failed for %s: %s", src_zst, exc)
+        tmp.unlink(missing_ok=True)
+        return False
+
+
+def _archive_snapshot(snap_dir: Path) -> Path:
+    """Compress snapshot directory into .tar.zst, delete raw directory."""
+    archive = snap_dir.with_suffix(".tar.zst")
+    if zstandard is None:
+        archive = snap_dir.with_suffix(".tar.gz")
+        with tarfile.open(str(archive), "w:gz") as tar:
+            tar.add(str(snap_dir), arcname=snap_dir.name)
+    else:
+        cctx = zstandard.ZstdCompressor(level=3, threads=-1)
+        with open(archive, "wb") as f_out:
+            with cctx.stream_writer(f_out) as compressor:
+                with tarfile.open(fileobj=compressor, mode="w") as tar:
+                    tar.add(str(snap_dir), arcname=snap_dir.name)
+    shutil.rmtree(snap_dir, ignore_errors=True)
+    return archive
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +595,7 @@ _QUICK_STATE_FILES = (
 )
 
 _QUICK_SNAPSHOTS_DIR = "state-snapshots"
-_QUICK_DEFAULT_KEEP = 20
+_QUICK_DEFAULT_KEEP = 2
 
 
 def _quick_snapshot_root(hermes_home: Optional[Path] = None) -> Path:
@@ -562,8 +656,17 @@ def create_quick_snapshot(
 
         try:
             if src.suffix == ".db":
-                if not _safe_copy_db(src, dst):
-                    continue
+                if zstandard is not None:
+                    compressed_rel = rel + ".zst"
+                    compressed_dst = snap_dir / compressed_rel
+                    compressed_dst.parent.mkdir(parents=True, exist_ok=True)
+                    if not _safe_copy_db_compressed(src, compressed_dst):
+                        continue
+                    manifest[compressed_rel] = compressed_dst.stat().st_size
+                else:
+                    if not _safe_copy_db(src, dst):
+                        continue
+                    manifest[rel] = dst.stat().st_size
             else:
                 shutil.copy2(src, dst)
             manifest[rel] = dst.stat().st_size
@@ -606,15 +709,39 @@ def list_quick_snapshots(
 
     results = []
     for d in sorted(root.iterdir(), reverse=True):
-        if not d.is_dir():
-            continue
-        manifest_path = d / "manifest.json"
-        if manifest_path.exists():
+        # Handle .tar.zst / .tar.gz archives
+        if d.suffix in (".tar.zst", ".tar.gz"):
+            snap_id = d.name.rsplit(".", 2)[0] if d.suffix == ".tar.zst" else d.stem.replace(".tar", "")
             try:
-                with open(manifest_path, encoding="utf-8") as f:
-                    results.append(json.load(f))
-            except (json.JSONDecodeError, OSError):
-                results.append({"id": d.name, "file_count": 0, "total_size": 0})
+                if d.suffix == ".tar.zst" and zstandard is not None:
+                    dctx = zstandard.ZstdDecompressor()
+                    with open(d, "rb") as f_in:
+                        with dctx.stream_reader(f_in) as reader:
+                            with tarfile.open(fileobj=reader, mode="r") as tar:
+                                for member in tar.getmembers():
+                                    if member.name.endswith("manifest.json"):
+                                        f = tar.extractfile(member)
+                                        if f:
+                                            results.append(json.loads(f.read()))
+                                            break
+                elif d.suffix == ".tar.gz":
+                    with tarfile.open(str(d), "r:gz") as tar:
+                        for member in tar.getmembers():
+                            if member.name.endswith("manifest.json"):
+                                f = tar.extractfile(member)
+                                if f:
+                                    results.append(json.loads(f.read()))
+                                    break
+            except Exception:
+                results.append({"id": snap_id, "file_count": 0, "total_size": 0})
+        elif d.is_dir():
+            manifest_path = d / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, encoding="utf-8") as f:
+                        results.append(json.load(f))
+                except (json.JSONDecodeError, OSError):
+                    results.append({"id": d.name, "file_count": 0, "total_size": 0})
         if len(results) >= limit:
             break
 
@@ -634,37 +761,73 @@ def restore_quick_snapshot(
     root = _quick_snapshot_root(home)
     snap_dir = root / snapshot_id
 
+    # Handle .tar.zst archives — extract to temp dir first
+    archive = root / f"{snapshot_id}.tar.zst"
+    archive_gz = root / f"{snapshot_id}.tar.gz"
+    tmp_extract = None
+    if archive.exists() and zstandard is not None:
+        tmp_extract = root / f".{snapshot_id}.extract"
+        dctx = zstandard.ZstdDecompressor()
+        with open(archive, "rb") as f_in:
+            with dctx.stream_reader(f_in) as reader:
+                with tarfile.open(fileobj=reader, mode="r") as tar:
+                    tar.extractall(str(tmp_extract))
+        snap_dir = tmp_extract / snapshot_id
+    elif archive_gz.exists():
+        tmp_extract = root / f".{snapshot_id}.extract"
+        with tarfile.open(str(archive_gz), "r:gz") as tar:
+            tar.extractall(str(tmp_extract))
+        snap_dir = tmp_extract / snapshot_id
+
     if not snap_dir.is_dir():
+        if tmp_extract is not None:
+            shutil.rmtree(tmp_extract, ignore_errors=True)
         return False
 
     manifest_path = snap_dir / "manifest.json"
     if not manifest_path.exists():
+        if tmp_extract is not None:
+            shutil.rmtree(tmp_extract, ignore_errors=True)
         return False
 
     with open(manifest_path, encoding="utf-8") as f:
         meta = json.load(f)
 
     restored = 0
-    for rel in meta.get("files", {}):
-        src = snap_dir / rel
-        if not src.exists():
-            continue
+    try:
+        for rel in meta.get("files", {}):
+            src = snap_dir / rel
+            if not src.exists():
+                continue
 
-        dst = home / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
+            # Map .db.zst entries back to .db target
+            dst_rel = rel
+            if rel.endswith(".db.zst"):
+                dst_rel = rel[:-4]  # strip .zst -> .db
+            dst = home / dst_rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
 
-        try:
-            if dst.suffix == ".db":
-                # Atomic-ish replace for databases
-                tmp = dst.parent / f".{dst.name}.snap_restore"
-                shutil.copy2(src, tmp)
-                dst.unlink(missing_ok=True)
-                shutil.move(str(tmp), str(dst))
-            else:
-                shutil.copy2(src, dst)
-            restored += 1
-        except (OSError, PermissionError) as exc:
-            logger.error("Failed to restore %s: %s", rel, exc)
+            try:
+                if src.suffix == ".zst" and dst.suffix == ".db":
+                    # Compressed database — decompress to target
+                    tmp = dst.parent / f".{dst.name}.snap_restore"
+                    if not _decompress_db_zst(src, tmp):
+                        continue
+                    shutil.move(str(tmp), str(dst))
+                elif dst.suffix == ".db":
+                    # Uncompressed database — atomic replace
+                    tmp = dst.parent / f".{dst.name}.snap_restore"
+                    shutil.copy2(src, tmp)
+                    dst.unlink(missing_ok=True)
+                    shutil.move(str(tmp), str(dst))
+                else:
+                    shutil.copy2(src, dst)
+                restored += 1
+            except (OSError, PermissionError) as exc:
+                logger.error("Failed to restore %s: %s", rel, exc)
+    finally:
+        if tmp_extract is not None:
+            shutil.rmtree(tmp_extract, ignore_errors=True)
 
     logger.info("Restored %d files from snapshot %s", restored, snapshot_id)
     return restored > 0
@@ -774,16 +937,19 @@ def _prune_quick_snapshots(root: Path, keep: int = _QUICK_DEFAULT_KEEP) -> int:
     if not root.exists():
         return 0
 
-    dirs = sorted(
-        (d for d in root.iterdir() if d.is_dir()),
-        key=lambda d: d.name,
-        reverse=True,
-    )
+    entries = []
+    for d in root.iterdir():
+        if d.is_dir() or d.suffix in (".tar.zst", ".tar.gz"):
+            entries.append(d)
+    entries.sort(key=lambda d: d.name, reverse=True)
 
     deleted = 0
-    for d in dirs[keep:]:
+    for d in entries[keep:]:
         try:
-            shutil.rmtree(d)
+            if d.is_file():
+                d.unlink()
+            else:
+                shutil.rmtree(d)
             deleted += 1
         except OSError as exc:
             logger.warning("Failed to prune snapshot %s: %s", d.name, exc)
