@@ -4088,6 +4088,14 @@ def run_conversation(
                 # them here can defer compaction by one expensive provider call
                 # after large searches, file reads, or terminal outputs.
                 _compressor = agent.context_compressor
+                dedupe_tool_results = getattr(_compressor, "dedupe_duplicate_tool_results", None)
+                if callable(dedupe_tool_results):
+                    messages, _deduped_tool_results = dedupe_tool_results(messages)
+                    if _deduped_tool_results:
+                        logger.info(
+                            "Deduplicated %d repeated tool result(s) before next request",
+                            _deduped_tool_results,
+                        )
                 _real_tokens = estimate_request_tokens_rough(
                     messages,
                     system_prompt=active_system_prompt or "",
