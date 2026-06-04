@@ -757,14 +757,13 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
                     # Count repeated stub returns so weak tool-followers that
                     # ignore the "refer to earlier result" hint don't burn
                     # their iteration budget in an infinite read loop.  After
-                    # 2 stubs for the same key we escalate to a hard block
-                    # mirroring the count>=4 path on real reads.
+                    # 4 stubs for the same key we escalate to a hard block.
                     with _read_tracker_lock:
                         hits = task_data["dedup_hits"].get(dedup_key, 0) + 1
                         task_data["dedup_hits"][dedup_key] = hits
                         _cap_read_tracker_data(task_data)
 
-                    if hits >= 2:
+                    if hits >= 4:
                         return json.dumps({
                             "error": (
                                 f"BLOCKED: You have called read_file on this "
