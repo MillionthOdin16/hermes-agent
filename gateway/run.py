@@ -9603,25 +9603,21 @@ class GatewayRunner:
                     session_entry.session_id,
                 )
 
-            # When compression is exhausted, the session is permanently too
-            # large to process.  Auto-reset it so the next message starts
-            # fresh instead of replaying the same oversized context in an
-            # infinite fail loop.  (#9893)
+            # When compression is exhausted, do not silently rotate the session.
+            # Skipping transcript persistence above prevents growth loops, while
+            # preserving the session lets the user decide whether to compact,
+            # switch models, or explicitly start over with /new or /reset.
             if agent_result.get("compression_exhausted") and session_entry and session_key:
+                agent_result["context_recovery_blocked"] = True
                 logger.info(
-                    "Auto-resetting session %s after compression exhaustion.",
+                    "Context recovery blocked for session %s after compression exhaustion.",
                     session_entry.session_id,
                 )
-                self.session_store.reset_session(session_key)
-                self._evict_cached_agent(session_key)
-                self._session_model_overrides.pop(session_key, None)
-                self._set_session_reasoning_override(session_key, None)
-                if hasattr(self, "_pending_model_notes"):
-                    self._pending_model_notes.pop(session_key, None)
                 response = (response or "") + (
-                    "\n\n🔄 Session auto-reset — the conversation exceeded the "
+                    "\n\n⚠️ Context recovery blocked — the conversation exceeded the "
                     "maximum context size and could not be compressed further. "
-                    "Your next message will start a fresh session."
+                    "The session was not reset. Use /compress, switch to a larger "
+                    "context model, or use /new or /reset when you want a clean session."
                 )
 
             ts = datetime.now().isoformat()
