@@ -342,12 +342,12 @@ class PlatformConfig:
 
 
 # Streaming defaults — single source of truth so both StreamingConfig and
-# StreamConsumerConfig agree on the out-of-the-box edit rhythm.  Tuned for
-# Telegram's ~1 edit/s flood envelope: a touch under 1s lets the cadence
-# breathe without bumping into rate limits, and a smaller buffer threshold
-# makes short replies feel near-instant in DMs.
-DEFAULT_STREAMING_EDIT_INTERVAL: float = 0.8
-DEFAULT_STREAMING_BUFFER_THRESHOLD: int = 24
+# StreamConsumerConfig agree on the out-of-the-box edit rhythm. Telegram's
+# flood envelope is ~1 edit/s per message; 1.5s gives comfortable margin and
+# a higher buffer threshold batches more tokens per edit, further reducing
+# the edit count on long responses.
+DEFAULT_STREAMING_EDIT_INTERVAL: float = 1.5
+DEFAULT_STREAMING_BUFFER_THRESHOLD: int = 120
 DEFAULT_STREAMING_CURSOR: str = " ▉"
 
 
