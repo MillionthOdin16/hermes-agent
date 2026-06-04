@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -90,6 +91,7 @@ def _make_runner_with_adapter(session_id: str = None):
     runner.session_store = MagicMock()
     runner.session_store.get_or_create_session.return_value = session_entry
     runner.session_store._generate_session_key.return_value = build_session_key(src)
+    runner.hooks = SimpleNamespace(emit_collect=MagicMock(return_value=[]))
 
     adapter = _RecordingAdapter()
     runner.adapters[Platform.TELEGRAM] = adapter
@@ -102,12 +104,14 @@ async def test_goal_verdict_done_sent_via_adapter_send(hermes_home):
     the user through the adapter's ``send()`` method."""
     runner, adapter, session_entry, src = _make_runner_with_adapter()
 
-    from hermes_cli.goals import GoalManager
+    from hermes_cli.goals import GoalManager, save_goal
 
     mgr = GoalManager(session_entry.session_id)
-    mgr.set("ship the feature")
+    state = mgr.set("ship the feature")
+    state.decomposed = True
+    save_goal(session_entry.session_id, state)
 
-    with patch("hermes_cli.goals.judge_goal", return_value=("done", "the feature shipped", False)):
+    with patch("hermes_cli.goals.judge_goal_freeform", return_value=("done", "the feature shipped", False)):
         await runner._post_turn_goal_continuation(
             session_entry=session_entry,
             source=src,
@@ -131,12 +135,14 @@ async def test_goal_verdict_continue_enqueues_continuation(hermes_home):
     proceeds on the next turn."""
     runner, adapter, session_entry, src = _make_runner_with_adapter()
 
-    from hermes_cli.goals import GoalManager
+    from hermes_cli.goals import GoalManager, save_goal
 
     mgr = GoalManager(session_entry.session_id)
-    mgr.set("polish the docs")
+    state = mgr.set("polish the docs")
+    state.decomposed = True
+    save_goal(session_entry.session_id, state)
 
-    with patch("hermes_cli.goals.judge_goal", return_value=("continue", "still needs work", False)):
+    with patch("hermes_cli.goals.judge_goal_freeform", return_value=("continue", "still needs work", False)):
         await runner._post_turn_goal_continuation(
             session_entry=session_entry,
             source=src,
@@ -161,10 +167,11 @@ async def test_goal_verdict_budget_exhausted_sends_pause(hermes_home):
 
     mgr = GoalManager(session_entry.session_id, default_max_turns=2)
     state = mgr.set("tiny goal", max_turns=2)
+    state.decomposed = True
     state.turns_used = 2
     save_goal(session_entry.session_id, state)
 
-    with patch("hermes_cli.goals.judge_goal", return_value=("continue", "keep going", False)):
+    with patch("hermes_cli.goals.judge_goal_freeform", return_value=("continue", "keep going", False)):
         await runner._post_turn_goal_continuation(
             session_entry=session_entry,
             source=src,
@@ -211,7 +218,7 @@ async def test_goal_verdict_survives_adapter_without_send(hermes_home):
 
     runner.adapters[Platform.TELEGRAM] = _NoSendAdapter()
 
-    with patch("hermes_cli.goals.judge_goal", return_value=("done", "ok", False)):
+    with patch("hermes_cli.goals.judge_goal_freeform", return_value=("done", "ok", False)):
         # must not raise
         await runner._post_turn_goal_continuation(
             session_entry=session_entry,
@@ -219,3 +226,130 @@ async def test_goal_verdict_survives_adapter_without_send(hermes_home):
             final_response="whatever",
         )
         await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_goal_gateway_hook_external_evidence_is_recorded_before_judge(hermes_home):
+    """Gateway goal evidence hooks may add ledger evidence, but cannot complete items."""
+    runner, _adapter, session_entry, src = _make_runner_with_adapter()
+
+    from hermes_cli.goals import GoalManager
+
+    mgr = GoalManager(session_entry.session_id)
+    state = mgr.set("verify artifact")
+    state.decomposed = True
+    from hermes_cli.goals import ADDED_BY_JUDGE, ChecklistItem, ITEM_PENDING, save_goal
+
+    state.checklist = [
+        ChecklistItem(
+            text="Verify artifact",
+            status=ITEM_PENDING,
+            added_by=ADDED_BY_JUDGE,
+        )
+    ]
+    save_goal(session_entry.session_id, state)
+    runner.hooks.emit_collect = MagicMock(return_value=[
+        {
+            "summary": "gateway hook verified /tmp/artifact.json with OPENAI_API_KEY=secret",
+            "evidence_type": "verification_summary",
+            "artifact_paths": ["/tmp/artifact.json", "/home/opc/.env"],
+            "result_summary": "passed",
+            "status": "passed",
+        }
+    ])
+
+    with patch(
+        "hermes_cli.goals.evaluate_checklist",
+        return_value=({"updates": [], "pending_reasons": [], "new_items": [], "reason": "not enough"}, False),
+    ):
+        await runner._post_turn_goal_continuation(
+            session_entry=session_entry,
+            source=src,
+            final_response="Partial work only.",
+        )
+
+    reloaded = GoalManager(session_entry.session_id).state
+    assert reloaded.status == "active"
+    assert reloaded.checklist[0].status == ITEM_PENDING
+    assert reloaded.evidence_ledger
+    entry = reloaded.evidence_ledger[-1]
+    assert entry.source == "hook"
+    assert entry.evidence_type == "verification_summary"
+    encoded = reloaded.to_json()
+    assert "OPENAI_API_KEY" not in encoded
+    assert ".env" not in encoded
+    assert "/tmp/artifact.json" in encoded
+    runner.hooks.emit_collect.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_goal_plugin_external_evidence_rejects_tool_output_source(hermes_home):
+    """Plugin evidence is accepted only through external source labels, never tool_output."""
+    runner, _adapter, session_entry, src = _make_runner_with_adapter()
+
+    from hermes_cli.goals import GoalManager
+
+    GoalManager(session_entry.session_id).set("verify plugin evidence")
+    runner.hooks.emit_collect = MagicMock(return_value=[])
+
+    with patch(
+        "hermes_cli.plugins.invoke_hook",
+        return_value=[
+            {
+                "source": "tool_output",
+                "summary": "plugin tried to masquerade as tool output",
+                "evidence_type": "verification_summary",
+            },
+            {
+                "summary": "plugin verifier summary",
+                "evidence_type": "verification_summary",
+                "status": "passed",
+            },
+        ],
+    ):
+        with patch("hermes_cli.goals.judge_goal_freeform", return_value=("continue", "not done", False)):
+            await runner._post_turn_goal_continuation(
+                session_entry=session_entry,
+                source=src,
+                final_response="Partial work only.",
+            )
+
+    reloaded = GoalManager(session_entry.session_id).state
+    assert [entry.source for entry in reloaded.evidence_ledger] == ["plugin"]
+    assert reloaded.evidence_ledger[0].summary == "plugin verifier summary"
+
+
+@pytest.mark.asyncio
+async def test_goal_bundled_evidence_plugin_feeds_gateway_ledger(hermes_home):
+    """The bundled goal-evidence producer should feed ledger entries through plugin hooks."""
+    runner, _adapter, session_entry, src = _make_runner_with_adapter()
+
+    from hermes_cli import plugins as plugins_mod
+    from hermes_cli.goals import GoalManager
+
+    plugins_mod._plugin_manager = plugins_mod.PluginManager()
+    plugins_mod.discover_plugins(force=True)
+    runner.hooks.emit_collect = MagicMock(return_value=[])
+    GoalManager(session_entry.session_id).set("verify tests")
+
+    with patch("hermes_cli.goals.judge_goal_freeform", return_value=("continue", "not done", False)):
+        await runner._post_turn_goal_continuation(
+            session_entry=session_entry,
+            source=src,
+            final_response=(
+                "Verification:\n"
+                "Command: pytest -q\n"
+                "1 passed in 0.11s\n"
+                "Artifact: /tmp/goal-plugin-report.json"
+            ),
+        )
+
+    reloaded = GoalManager(session_entry.session_id).state
+    assert reloaded.status == "active"
+    assert [entry.source for entry in reloaded.evidence_ledger] == ["plugin", "plugin"]
+    assert {entry.evidence_type for entry in reloaded.evidence_ledger} == {
+        "test_result",
+        "file_artifact",
+    }
+    encoded = reloaded.to_json()
+    assert "/tmp/goal-plugin-report.json" in encoded
