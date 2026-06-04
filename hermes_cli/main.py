@@ -8011,8 +8011,15 @@ def _stash_local_changes_if_needed(git_cmd: list[str], cwd: Path) -> Optional[st
         "hermes-update-autostash-%Y%m%d-%H%M%S"
     )
     print("→ Local changes detected — stashing before update...")
+    # Exclude hermes_cli/backup.py from the stash so its compression code
+    # (zstd snapshots) is available when create_quick_snapshot runs before
+    # the stash is popped.  backup.py is rarely touched by upstream so the
+    # conflict risk on stash-pop is negligible.
+    exclude_backup = []
+    if (cwd / "hermes_cli" / "backup.py").exists():
+        exclude_backup = [":(exclude)hermes_cli/backup.py"]
     subprocess.run(
-        git_cmd + ["stash", "push", "--include-untracked", "-m", stash_name],
+        git_cmd + ["stash", "push", "--include-untracked", "-m", stash_name, "--", "."] + exclude_backup,
         cwd=cwd,
         check=True,
     )
