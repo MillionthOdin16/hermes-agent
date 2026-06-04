@@ -16,6 +16,8 @@ The parent's context only sees the delegation call and the summary result,
 never the child's intermediate tool calls or reasoning.
 """
 
+from __future__ import annotations
+
 import enum
 import json
 import logging
@@ -147,7 +149,11 @@ _MAX_SPAWN_DEPTH_CAP = 3
 # ---------------------------------------------------------------------------
 
 _spawn_pause_lock = threading.Lock()
-_spawn_paused: bool = False
+# Session-scoped pause: session_id -> bool.  "_global" key is the global
+# fallback for callers without a session context.  set_spawn_paused()
+# accepts an optional session_id to scope the pause; omitting it sets the
+# global flag that affects all sessions.
+_spawn_paused: Dict[str, bool] = {}
 
 _active_subagents_lock = threading.Lock()
 # subagent_id -> mutable record tracking the live child agent.  Stays only
@@ -155,21 +161,31 @@ _active_subagents_lock = threading.Lock()
 _active_subagents: Dict[str, Dict[str, Any]] = {}
 
 
-def set_spawn_paused(paused: bool) -> bool:
-    """Globally block/unblock new delegate_task spawns.
+def set_spawn_paused(paused: bool, *, session_id: Optional[str] = None) -> bool:
+    """Block/unblock new delegate_task spawns for a specific session or globally.
+
+    When session_id is provided, the pause only affects delegate_task calls
+    from that session.  Without session_id, sets the global flag that
+    affects all sessions (backward compatible).
 
     Active children keep running; only NEW calls to delegate_task fail fast
     with a "spawning paused" error until unblocked.  Returns the new state.
     """
-    global _spawn_paused
+    key = session_id or "_global"
     with _spawn_pause_lock:
-        _spawn_paused = bool(paused)
-        return _spawn_paused
+        _spawn_paused[key] = bool(paused)
+        return _spawn_paused[key]
 
 
-def is_spawn_paused() -> bool:
+def is_spawn_paused(session_id: Optional[str] = None) -> bool:
+    """Check if spawning is paused for the given session or globally.
+
+    Returns True if the specific session is paused OR the global flag is set.
+    """
     with _spawn_pause_lock:
-        return _spawn_paused
+        if session_id and _spawn_paused.get(session_id, False):
+            return True
+        return _spawn_paused.get("_global", False)
 
 
 def _register_subagent(record: Dict[str, Any]) -> None:
@@ -309,6 +325,9 @@ def _looks_like_error_output(content: str) -> bool:
     )
 
 
+_VALID_ROLES = frozenset({"leaf", "orchestrator"})
+
+
 def _normalize_role(r: Optional[str]) -> str:
     """Normalise a caller-provided role to 'leaf' or 'orchestrator'.
 
@@ -320,10 +339,31 @@ def _normalize_role(r: Optional[str]) -> str:
     if r is None or not r:
         return "leaf"
     r_norm = str(r).strip().lower()
-    if r_norm in {"leaf", "orchestrator"}:
+    if r_norm in _VALID_ROLES:
         return r_norm
     logger.warning("Unknown delegate_task role=%r, coercing to 'leaf'", r)
     return "leaf"
+
+
+def _validate_role(r: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Validate a caller-provided role and return (normalized, error).
+
+    Returns (normalized_role, None) on success or (None, error_message)
+    when the role is explicitly provided but not one of the valid values.
+    This gives the model feedback that its role specification was rejected
+    rather than silently coercing to 'leaf'.
+    """
+    if r is None or not r:
+        return "leaf", None
+    r_norm = str(r).strip().lower()
+    if r_norm in _VALID_ROLES:
+        return r_norm, None
+    return None, (
+        f"Invalid role {r!r}. Valid roles: leaf, orchestrator. "
+        "Pass role='leaf' (default, cannot delegate further) or "
+        "role='orchestrator' (can spawn own workers, requires "
+        "delegation.max_spawn_depth >= 2)."
+    )
 
 
 def _get_max_concurrent_children() -> int:
@@ -678,6 +718,74 @@ def _strip_blocked_tools(toolsets: List[str]) -> List[str]:
         "code_execution",
     }
     return [t for t in toolsets if t not in blocked_toolset_names]
+
+
+def _validate_child_toolsets(
+    requested_toolsets: Optional[List[str]],
+    parent_agent,
+    is_orchestrator: bool = False,
+) -> List[str]:
+    """Compute effective child toolsets and validate they are non-empty.
+
+    Returns the effective toolsets list.  Raises ValueError if the
+    intersection of requested toolsets with the parent's available
+    toolsets is empty (after stripping blocked tools), which would
+    produce a child with no tools that silently does nothing.
+
+    This is called in the task-building loop so we fail fast with a
+    descriptive error rather than spawning a useless child.
+    """
+    parent_enabled = getattr(parent_agent, "enabled_toolsets", None)
+    # Use parent_enabled only if it's a concrete list (not None and not a
+    # MagicMock auto-attribute that creates truthy proxies on access).
+    use_explicit = isinstance(parent_enabled, list)
+
+    if use_explicit:
+        parent_toolsets = set(parent_enabled)
+    elif parent_agent and hasattr(parent_agent, "valid_tool_names"):
+        import model_tools
+        tool_names = getattr(parent_agent, "valid_tool_names", None)
+        if tool_names and isinstance(tool_names, (set, list)):
+            parent_toolsets = {
+                ts
+                for name in tool_names
+                if (ts := model_tools.get_toolset_for_tool(name)) is not None
+            }
+        else:
+            parent_toolsets = set(DEFAULT_TOOLSETS)
+    else:
+        parent_toolsets = set(DEFAULT_TOOLSETS)
+
+    if requested_toolsets:
+        expanded_parent = _expand_parent_toolsets(parent_toolsets)
+        child_toolsets = [t for t in requested_toolsets if t in expanded_parent]
+        if _get_inherit_mcp_toolsets():
+            child_toolsets = _preserve_parent_mcp_toolsets(
+                child_toolsets, parent_toolsets
+            )
+        child_toolsets = _strip_blocked_tools(child_toolsets)
+    elif use_explicit:
+        child_toolsets = _strip_blocked_tools(parent_enabled)
+    elif parent_toolsets:
+        child_toolsets = _strip_blocked_tools(sorted(parent_toolsets))
+    else:
+        child_toolsets = _strip_blocked_tools(DEFAULT_TOOLSETS)
+
+    if is_orchestrator and "delegation" not in child_toolsets:
+        child_toolsets.append("delegation")
+
+    if not child_toolsets:
+        requested_desc = ", ".join(requested_toolsets) if requested_toolsets else "(inherited from parent)"
+        parent_desc = sorted(parent_toolsets) if parent_toolsets else "(none)"
+        raise ValueError(
+            f"Child toolsets would be empty after intersection with "
+            f"parent's available toolsets. Requested: [{requested_desc}], "
+            f"parent toolsets: {parent_desc}. The child would have no "
+            f"tools to work with. Either broaden the parent's "
+            f"enabled_toolsets, request a toolset the parent has, or omit "
+            f"the toolsets parameter to inherit the parent's full set."
+        )
+    return child_toolsets
 
 
 def _build_child_progress_callback(
@@ -1156,12 +1264,15 @@ def _build_child_agent(
 
     # Register child for interrupt propagation
     if hasattr(parent_agent, "_active_children"):
-        lock = getattr(parent_agent, "_active_children_lock", None)
-        if lock:
-            with lock:
+        ac_lock = getattr(parent_agent, "_active_children_lock", None)
+        try:
+            if ac_lock:
+                with ac_lock:
+                    parent_agent._active_children.append(child)
+            else:
                 parent_agent._active_children.append(child)
-        else:
-            parent_agent._active_children.append(child)
+        except Exception as exc:
+            logger.debug("Failed to register child in active_children: %s", exc)
 
     # Announce the spawn immediately — the child may sit in a queue
     # for seconds if max_concurrent_children is saturated, so the TUI
@@ -1888,15 +1999,15 @@ def _run_single_child(
 
         # Unregister child from interrupt propagation
         if hasattr(parent_agent, "_active_children"):
+            ac_lock = getattr(parent_agent, "_active_children_lock", None)
             try:
-                lock = getattr(parent_agent, "_active_children_lock", None)
-                if lock:
-                    with lock:
+                if ac_lock:
+                    with ac_lock:
                         parent_agent._active_children.remove(child)
                 else:
                     parent_agent._active_children.remove(child)
-            except (ValueError, UnboundLocalError) as e:
-                logger.debug("Could not remove child from active_children: %s", e)
+            except (ValueError, AttributeError, KeyError) as exc:
+                logger.debug("Could not remove child from active_children: %s", exc)
 
         # Close tool resources (terminal sandboxes, browser daemons,
         # background processes, httpx clients) so subagent subprocesses
@@ -1962,14 +2073,18 @@ def delegate_task(
     # Operator-controlled kill switch — lets the TUI freeze new fan-out
     # when a runaway tree is detected, without interrupting already-running
     # children.  Cleared via the matching `delegation.pause` RPC.
-    if is_spawn_paused():
+    # Session-scoped: only blocks this session unless global flag is set.
+    _session_id = getattr(parent_agent, "session_id", None)
+    if is_spawn_paused(session_id=_session_id):
         return tool_error(
             "Delegation spawning is paused. Clear the pause via the TUI "
             "(`p` in /agents) or the `delegation.pause` RPC before retrying."
         )
 
-    # Normalise the top-level role once; per-task overrides re-normalise.
-    top_role = _normalize_role(role)
+    # Validate the top-level role once; per-task overrides re-validate.
+    top_role, role_error = _validate_role(role)
+    if role_error:
+        return tool_error(role_error)
 
     # Depth limit — configurable via delegation.max_spawn_depth,
     # default 2 for parity with the original MAX_DEPTH constant.
@@ -2002,6 +2117,12 @@ def delegate_task(
             max_iterations, default_max_iter,
         )
     effective_max_iter = default_max_iter
+    # Track whether the model's max_iterations was overridden so we can
+    # surface it in the response.  This gives the model feedback that its
+    # value was ignored, preventing trust erosion.
+    _max_iter_override = (
+        max_iterations is not None and max_iterations != default_max_iter
+    )
 
     # Resolve delegation credentials (provider:model pair).
     # When delegation.provider is configured, this resolves the full credential
@@ -2071,9 +2192,26 @@ def delegate_task(
     try:
         for i, t in enumerate(task_list):
             task_acp_args = t.get("acp_args") if "acp_args" in t else None
-            # Per-task role beats top-level; normalise again so unknown
-            # per-task values warn and degrade to leaf uniformly.
-            effective_role = _normalize_role(t.get("role") or top_role)
+            # Per-task role beats top-level; validate against valid values.
+            # Return error for invalid per-task roles rather than silently
+            # coercing to 'leaf' (matches top-level validation).
+            per_task_role_src = t.get("role") or top_role
+            effective_role, per_role_error = _validate_role(per_task_role_src)
+            if per_role_error:
+                return tool_error(f"Task {i}: {per_role_error}")
+            assert effective_role is not None  # guaranteed by _validate_role
+            # Pre-flight: validate that the child would get at least one
+            # toolset.  Without this, a child with zero tools spawns, does
+            # nothing, and returns "completed" with an empty summary —
+            # silently wasting a delegation slot.
+            try:
+                _validate_child_toolsets(
+                    requested_toolsets=t.get("toolsets") or toolsets,
+                    parent_agent=parent_agent,
+                    is_orchestrator=(effective_role == "orchestrator"),
+                )
+            except ValueError as exc:
+                return tool_error(f"Task {i}: {exc}")
             child = _build_child_agent(
                 task_index=i,
                 goal=t["goal"],
@@ -2324,13 +2462,18 @@ def delegate_task(
 
     total_duration = round(time.monotonic() - overall_start, 2)
 
-    return json.dumps(
-        {
-            "results": results,
-            "total_duration_seconds": total_duration,
-        },
-        ensure_ascii=False,
-    )
+    response: Dict[str, Any] = {
+        "results": results,
+        "total_duration_seconds": total_duration,
+        "max_iterations_used": effective_max_iter,
+    }
+    if _max_iter_override:
+        response["max_iterations_note"] = (
+            f"caller-supplied max_iterations={max_iterations} was "
+            f"ignored; using delegation.max_iterations="
+            f"{effective_max_iter} from config"
+        )
+    return json.dumps(response, ensure_ascii=False)
 
 
 def _resolve_child_credential_pool(effective_provider: Optional[str], parent_agent):
