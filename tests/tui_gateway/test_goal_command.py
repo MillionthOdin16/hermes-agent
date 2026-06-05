@@ -11,6 +11,7 @@ uses to render a system line and fire the kickoff prompt.
 from __future__ import annotations
 
 import importlib
+import json
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -132,6 +133,61 @@ def test_goal_pause_after_set(server, session):
     from hermes_cli.goals import GoalManager
 
     assert GoalManager(session_key).state.status == "paused"
+
+
+def test_goal_pause_with_reason_after_set(server, session):
+    sid, session_key, _ = session
+    _call(server, "command.dispatch", name="goal", arg="write a story", session_id=sid)
+    r = _call(server, "command.dispatch", name="goal", arg="pause waiting for user", session_id=sid)
+    assert r["result"]["type"] == "exec"
+    assert "paused" in r["result"]["output"].lower()
+
+    from hermes_cli.goals import GoalManager
+
+    state = GoalManager(session_key).state
+    assert state.status == "paused"
+    assert state.paused_reason == "waiting for user"
+
+
+def test_goal_trace_after_set(server, session):
+    sid, session_key, _ = session
+    _call(server, "command.dispatch", name="goal", arg="write a story", session_id=sid)
+
+    from hermes_cli.goals import GoalManager, save_goal
+
+    mgr = GoalManager(session_key)
+    mgr.state.decomposition_scope = "medium"
+    mgr.state.decomposition_item_bounds = {"min_items": 5, "max_items": 12}
+    save_goal(session_key, mgr.state)
+
+    r = _call(server, "command.dispatch", name="goal", arg="trace", session_id=sid)
+
+    assert r["result"]["type"] == "exec"
+    assert "Goal trace" in r["result"]["output"]
+    assert f"session_id: {session_key}" in r["result"]["output"]
+    assert "scope: medium" in r["result"]["output"]
+    assert GoalManager(session_key).state.status == "active"
+
+
+def test_goal_trace_json_after_set(server, session):
+    sid, session_key, _ = session
+    _call(server, "command.dispatch", name="goal", arg="write a story", session_id=sid)
+
+    from hermes_cli.goals import GoalManager, save_goal
+
+    mgr = GoalManager(session_key)
+    mgr.state.decomposition_scope = "medium"
+    mgr.state.decomposition_item_bounds = {"min_items": 5, "max_items": 12}
+    save_goal(session_key, mgr.state)
+
+    r = _call(server, "command.dispatch", name="goal", arg="trace json", session_id=sid)
+
+    assert r["result"]["type"] == "exec"
+    trace = json.loads(r["result"]["output"])
+    assert trace["session_id"] == session_key
+    assert trace["scope"] == "medium"
+    assert trace["bounds"] == {"min_items": 5, "max_items": 12}
+    assert GoalManager(session_key).state.status == "active"
 
 
 def test_goal_resume_reactivates(server, session):

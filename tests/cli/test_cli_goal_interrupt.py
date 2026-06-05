@@ -80,7 +80,7 @@ class TestInterruptAutoPause:
 
         # Judge MUST NOT run on an interrupted turn. If it does, we've
         # regressed — fail loudly instead of silently querying a mock.
-        with patch("hermes_cli.goals.judge_goal") as judge_mock:
+        with patch("hermes_cli.goals.judge_goal_freeform") as judge_mock:
             judge_mock.side_effect = AssertionError(
                 "judge_goal called on an interrupted turn"
             )
@@ -105,11 +105,56 @@ class TestInterruptAutoPause:
         cli.conversation_history = [
             {"role": "assistant", "content": "partial"},
         ]
-        with patch("hermes_cli.goals.judge_goal"):
+        with patch("hermes_cli.goals.judge_goal_freeform"):
             cli._maybe_continue_goal_after_turn()
         assert mgr.state.status == "paused"
 
         mgr.resume()
+        assert mgr.state.status == "active"
+
+
+class TestGoalPauseCommandParsing:
+    def test_goal_pause_with_reason_pauses_existing_goal(self, hermes_home, capsys):
+        sid = f"sid-pause-reason-{uuid.uuid4().hex}"
+        cli, mgr = _make_cli_with_goal(sid)
+
+        cli._handle_goal_command("/goal pause waiting for user")
+
+        capsys.readouterr()
+        assert mgr.state.status == "paused"
+        assert mgr.state.paused_reason == "waiting for user"
+        assert mgr.state.goal == "build a thing"
+
+    def test_goal_trace_prints_read_only_diagnostic(self, hermes_home):
+        sid = f"sid-trace-{uuid.uuid4().hex}"
+        cli, mgr = _make_cli_with_goal(sid)
+        mgr.state.decomposition_scope = "simple"
+        mgr.state.decomposition_item_bounds = {"min_items": 2, "max_items": 5}
+        mgr.state.last_evaluation_route = {"route": "call_judge"}
+
+        with patch("cli._cprint") as print_mock:
+            cli._handle_goal_command("/goal trace")
+
+        out = "\n".join(str(call.args[0]) for call in print_mock.call_args_list)
+        assert "Goal trace" in out
+        assert f"session_id: {sid}" in out
+        assert "scope: simple" in out
+        assert mgr.state.status == "active"
+
+    def test_goal_trace_json_prints_structured_diagnostic(self, hermes_home):
+        sid = f"sid-trace-json-{uuid.uuid4().hex}"
+        cli, mgr = _make_cli_with_goal(sid)
+        mgr.state.decomposition_scope = "simple"
+        mgr.state.decomposition_item_bounds = {"min_items": 2, "max_items": 5}
+
+        with patch("cli._cprint") as print_mock:
+            cli._handle_goal_command("/goal trace json")
+
+        out = "\n".join(str(call.args[0]) for call in print_mock.call_args_list)
+        trace = json.loads(out)
+        assert trace["session_id"] == sid
+        assert trace["scope"] == "simple"
+        assert trace["bounds"] == {"min_items": 2, "max_items": 5}
         assert mgr.state.status == "active"
 
 
@@ -118,13 +163,14 @@ class TestEmptyResponseSkip:
         """Whitespace-only replies skip judging (transient failure guard)."""
         sid = f"sid-empty-{uuid.uuid4().hex}"
         cli, mgr = _make_cli_with_goal(sid)
+        mgr.state.decomposed = True
         cli._last_turn_interrupted = False
         cli.conversation_history = [
             {"role": "user", "content": "go"},
             {"role": "assistant", "content": "   \n\n   "},
         ]
 
-        with patch("hermes_cli.goals.judge_goal") as judge_mock:
+        with patch("hermes_cli.goals.judge_goal_freeform") as judge_mock:
             judge_mock.side_effect = AssertionError(
                 "judge_goal called on an empty response"
             )
@@ -143,7 +189,7 @@ class TestEmptyResponseSkip:
             {"role": "user", "content": "go"},
         ]
 
-        with patch("hermes_cli.goals.judge_goal") as judge_mock:
+        with patch("hermes_cli.goals.judge_goal_freeform") as judge_mock:
             judge_mock.side_effect = AssertionError(
                 "judge_goal called without an assistant response"
             )
@@ -168,7 +214,7 @@ class TestHealthyTurnStillRuns:
 
         # Force the judge to say "continue" without touching the network.
         with patch(
-            "hermes_cli.goals.judge_goal",
+            "hermes_cli.goals.judge_goal_freeform",
             return_value=("continue", "needs more steps", False),
         ):
             cli._maybe_continue_goal_after_turn()
@@ -182,13 +228,14 @@ class TestHealthyTurnStillRuns:
     def test_clean_response_marks_done_when_judge_says_done(self, hermes_home):
         sid = f"sid-done-{uuid.uuid4().hex}"
         cli, mgr = _make_cli_with_goal(sid)
+        mgr.state.decomposed = True
         cli._last_turn_interrupted = False
         cli.conversation_history = [
             {"role": "assistant", "content": "all finished, here's the result"},
         ]
 
         with patch(
-            "hermes_cli.goals.judge_goal",
+            "hermes_cli.goals.judge_goal_freeform",
             return_value=("done", "goal satisfied", False),
         ):
             cli._maybe_continue_goal_after_turn()
