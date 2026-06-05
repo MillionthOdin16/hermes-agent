@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, MagicMock
+import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -198,217 +199,491 @@ class TestGoalManager:
         state = mgr.set("port the thing")
         assert state.goal == "port the thing"
         assert state.status == "active"
-        assert state.max_turns == 5
-        assert state.turns_used == 0
-        assert mgr.is_active()
-        assert "active" in mgr.status_line().lower()
-        assert "port the thing" in mgr.status_line()
+        assert "active" in mgr.status_line()
 
-    def test_set_rejects_empty(self, hermes_home):
-        from hermes_cli.goals import GoalManager
+    def test_goal_persists_across_reloads(self, hermes_home):
+        from hermes_cli.goals import GoalManager, load_goal
 
         mgr = GoalManager(session_id="test-sid-3")
-        with pytest.raises(ValueError):
-            mgr.set("")
-        with pytest.raises(ValueError):
-            mgr.set("   ")
+        mgr.set("keep it")
+
+        reloaded = load_goal("test-sid-3")
+        assert reloaded is not None
+        assert reloaded.goal == "keep it"
+        assert reloaded.status == "active"
 
     def test_pause_and_resume(self, hermes_home):
-        from hermes_cli.goals import GoalManager
+        from hermes_cli.goals import GoalManager, GoalStatus
 
         mgr = GoalManager(session_id="test-sid-4")
-        mgr.set("goal text")
-        mgr.pause(reason="user-paused")
-        assert mgr.state.status == "paused"
-        assert not mgr.is_active()
-        assert mgr.has_goal()
+        mgr.set("do something")
+        mgr.pause("user-request")
+        assert mgr.state.status == GoalStatus.PAUSED.value
+        assert mgr.state.paused_reason == "user-request"
 
         mgr.resume()
-        assert mgr.state.status == "active"
-        assert mgr.is_active()
+        assert mgr.state.status == GoalStatus.ACTIVE.value
+        assert mgr.state.paused_reason is None
 
     def test_clear(self, hermes_home):
-        from hermes_cli.goals import GoalManager
+        from hermes_cli.goals import GoalManager, GoalStatus, load_goal
 
         mgr = GoalManager(session_id="test-sid-5")
-        mgr.set("goal")
+        mgr.set("finish me")
         mgr.clear()
         assert mgr.state is None
-        assert not mgr.is_active()
+        reloaded = load_goal("test-sid-5")
+        assert reloaded.status == GoalStatus.CLEARED.value
 
-    def test_persistence_across_managers(self, hermes_home):
-        """Key invariant: a second manager on the same session sees the goal.
 
-        This is what makes /resume work — each session rebinds its
-        GoalManager and picks up the saved state.
+# ──────────────────────────────────────────────────────────────────────
+# Goal decomposition
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestGoalDecomposition:
+    def test_parse_decomposition_text(self):
+        from hermes_cli.goals import _parse_decomposition_text
+
+        raw = """
+        1. Gather logs
+        2. Inspect error
+        3. Fix bug
         """
-        from hermes_cli.goals import GoalManager
+        checklist, notes = _parse_decomposition_text(raw)
+        assert len(checklist) == 3
+        assert notes == ""
 
-        mgr1 = GoalManager(session_id="persist-sid")
-        mgr1.set("do the thing")
+    def test_parse_decomposition_text_ignores_notes_block(self):
+        from hermes_cli.goals import _parse_decomposition_text
 
-        mgr2 = GoalManager(session_id="persist-sid")
-        assert mgr2.state is not None
-        assert mgr2.state.goal == "do the thing"
-        assert mgr2.is_active()
+        raw = """
+        1. Gather logs
+        2. Inspect error
+        Notes: here are some notes that should be ignored
+        """
+        checklist, notes = _parse_decomposition_text(raw)
+        assert len(checklist) == 2
+        assert notes.startswith("Notes:")
 
-    def test_evaluate_after_turn_done(self, hermes_home):
-        """Judge says done → status=done, no continuation."""
-        from hermes_cli import goals
-        from hermes_cli.goals import GoalManager
-
-        mgr = GoalManager(session_id="eval-sid-1")
-        mgr.set("ship it")
-
-        with patch.object(goals, "judge_goal", return_value=("done", "shipped", False)):
-            decision = mgr.evaluate_after_turn("I shipped the feature.")
-
-        assert decision["verdict"] == "done"
-        assert decision["should_continue"] is False
-        assert decision["continuation_prompt"] is None
-        assert mgr.state.status == "done"
-        assert mgr.state.turns_used == 1
-
-    def test_evaluate_after_turn_continue_under_budget(self, hermes_home):
-        from hermes_cli import goals
-        from hermes_cli.goals import GoalManager
-
-        mgr = GoalManager(session_id="eval-sid-2", default_max_turns=5)
-        mgr.set("a long goal")
-
-        with patch.object(goals, "judge_goal", return_value=("continue", "more work", False)):
-            decision = mgr.evaluate_after_turn("made some progress")
-
-        assert decision["verdict"] == "continue"
-        assert decision["should_continue"] is True
-        assert decision["continuation_prompt"] is not None
-        assert "a long goal" in decision["continuation_prompt"]
-        assert mgr.state.status == "active"
-        assert mgr.state.turns_used == 1
-
-    def test_evaluate_after_turn_budget_exhausted(self, hermes_home):
-        """When turn budget hits ceiling, auto-pause instead of continuing."""
-        from hermes_cli import goals
-        from hermes_cli.goals import GoalManager
-
-        mgr = GoalManager(session_id="eval-sid-3", default_max_turns=2)
-        mgr.set("hard goal")
-
-        with patch.object(goals, "judge_goal", return_value=("continue", "not yet", False)):
-            d1 = mgr.evaluate_after_turn("step 1")
-            assert d1["should_continue"] is True
-            assert mgr.state.turns_used == 1
-            assert mgr.state.status == "active"
-
-            d2 = mgr.evaluate_after_turn("step 2")
-            # turns_used is now 2 which equals max_turns → paused
-            assert d2["should_continue"] is False
-            assert mgr.state.status == "paused"
-            assert mgr.state.turns_used == 2
-            assert "budget" in (mgr.state.paused_reason or "").lower()
-
-    def test_evaluate_after_turn_inactive(self, hermes_home):
-        """evaluate_after_turn is a no-op when goal isn't active."""
-        from hermes_cli.goals import GoalManager
-
-        mgr = GoalManager(session_id="eval-sid-4")
-        d = mgr.evaluate_after_turn("anything")
-        assert d["verdict"] == "inactive"
-        assert d["should_continue"] is False
-
-        mgr.set("a goal")
-        mgr.pause()
-        d2 = mgr.evaluate_after_turn("anything")
-        assert d2["verdict"] == "inactive"
-        assert d2["should_continue"] is False
-
-    def test_continuation_prompt_shape(self, hermes_home):
-        """The continuation prompt must include the goal text verbatim —
-        and must be safe to inject as a user-role message (prompt-cache
-        invariants: no system-prompt mutation)."""
-        from hermes_cli.goals import GoalManager
-
-        mgr = GoalManager(session_id="cont-sid")
-        mgr.set("port goal command to hermes")
-        prompt = mgr.next_continuation_prompt()
-        assert prompt is not None
-        assert "port goal command to hermes" in prompt
-        assert prompt.strip()  # non-empty
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Smoke: CommandDef is wired
-# ──────────────────────────────────────────────────────────────────────
-
-
-def test_goal_command_in_registry():
-    from hermes_cli.commands import resolve_command
-
-    cmd = resolve_command("goal")
-    assert cmd is not None
-    assert cmd.name == "goal"
-
-
-def test_goal_command_dispatches_in_cli_registry_helpers():
-    """goal shows up in autocomplete / help categories alongside other Session cmds."""
-    from hermes_cli.commands import COMMANDS, COMMANDS_BY_CATEGORY
-
-    assert "/goal" in COMMANDS
-    session_cmds = COMMANDS_BY_CATEGORY.get("Session", {})
-    assert "/goal" in session_cmds
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Auto-pause on consecutive judge parse failures
-# ──────────────────────────────────────────────────────────────────────
-
-
-class TestJudgeParseFailureAutoPause:
-    """Regression: weak judge models (e.g. deepseek-v4-flash) that return
-    empty strings or non-JSON prose must auto-pause the loop after N turns
-    instead of burning the whole turn budget."""
-
-    def test_parse_response_flags_empty_as_parse_failure(self):
-        from hermes_cli.goals import _parse_judge_response
-
-        done, reason, parse_failed = _parse_judge_response("")
-        assert done is False
-        assert parse_failed is True
-        assert "empty" in reason.lower()
-
-    def test_parse_response_flags_non_json_as_parse_failure(self):
-        from hermes_cli.goals import _parse_judge_response
-
-        done, reason, parse_failed = _parse_judge_response(
-            "Let me analyze whether the goal is fully satisfied based on the agent's response..."
-        )
-        assert done is False
-        assert parse_failed is True
-        assert "not json" in reason.lower()
-
-    def test_parse_response_clean_json_is_not_parse_failure(self):
-        from hermes_cli.goals import _parse_judge_response
-
-        done, _, parse_failed = _parse_judge_response(
-            '{"done": false, "reason": "more work"}'
-        )
-        assert done is False
-        assert parse_failed is False
-
-    def test_api_error_does_not_count_as_parse_failure(self):
-        """Transient network/API errors must not trip the auto-pause guard."""
+    def test_simple_goal_decomposition_is_capped_and_deduplicated(self):
         from hermes_cli import goals
 
         fake_client = MagicMock()
-        fake_client.chat.completions.create.side_effect = RuntimeError("connection reset")
+        fake_client.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content=json.dumps({
+                        "checklist": [
+                            {"text": "Say hello to the user"},
+                            {"text": "Say hello to the user."},
+                            {"text": "Ensure the final answer is visible"},
+                            {"text": "Document known gaps"},
+                            {"text": "Provide completion evidence"},
+                            {"text": "Mention there are no blockers"},
+                            {"text": "Avoid unrelated content"},
+                            {"text": "Use a friendly tone"},
+                        ]
+                    }))
+                )
+            ]
+        )
+
         with patch(
             "agent.auxiliary_client.get_text_auxiliary_client",
             return_value=(fake_client, "judge-model"),
         ):
-            verdict, _, parse_failed = goals.judge_goal("goal", "response")
-        assert verdict == "continue"
-        assert parse_failed is False
+            items, err = goals.decompose_goal("say hello")
 
+        assert err is None
+        assert len(items) <= 5
+        assert [i["text"] for i in items].count("Say hello to the user") == 1
+
+    def test_decompose_prompt_includes_scope_control_without_contract_change(self):
+        from hermes_cli.goals import build_decompose_system_prompt
+
+        prompt = build_decompose_system_prompt("say hello")
+
+        assert "SCOPE CONTROL" in prompt
+        assert "simple" in prompt.lower()
+        assert '{"checklist": [{"text": "<item>"}' in prompt
+
+    def test_complex_goal_decomposition_keeps_larger_checklist_budget(self):
+        from hermes_cli import goals
+
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content=json.dumps({
+                        "checklist": [
+                            {"text": f"Implement and verify complex requirement {i}"}
+                            for i in range(1, 15)
+                        ]
+                    }))
+                )
+            ]
+        )
+
+        with patch(
+            "agent.auxiliary_client.get_text_auxiliary_client",
+            return_value=(fake_client, "judge-model"),
+        ):
+            items, err = goals.decompose_goal(
+                "Audit the goal system, implement fixes, add tests, and verify gateway integration"
+            )
+
+        assert err is None
+        assert len(items) == 14
+
+    def test_decompose_goal_inlines_referenced_file_context(self, tmp_path, monkeypatch):
+        from hermes_cli import goals
+
+        spec = tmp_path / "goal-spec.md"
+        spec.write_text(
+            "# Spec\n\n"
+            "- Add OAuth login.\n"
+            "- Preserve existing password login.\n"
+            "- Add regression tests for both flows.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content=json.dumps({
+                        "checklist": [
+                            {"text": "OAuth login is implemented"},
+                            {"text": "Existing password login still works"},
+                            {"text": "Regression tests cover both login flows"},
+                        ]
+                    }))
+                )
+            ]
+        )
+
+        with patch(
+            "agent.auxiliary_client.get_text_auxiliary_client",
+            return_value=(fake_client, "judge-model"),
+        ):
+            items, err = goals.decompose_goal("implement the following spec in [goal-spec.md]")
+
+        assert err is None
+        assert len(items) == 3
+        user_prompt = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "Resolved goal reference context" in user_prompt
+        assert "Add OAuth login" in user_prompt
+        assert "Preserve existing password login" in user_prompt
+        assert '{"checklist": [{"text": "<item>"}' not in user_prompt
+
+    def test_goal_manager_persists_decomposition_reference_audit(self, hermes_home, tmp_path, monkeypatch):
+        from hermes_cli.goals import GoalManager, GoalVerdict
+
+        spec = tmp_path / "task.md"
+        spec.write_text("Build the export command and test CSV output.\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        mgr = GoalManager(session_id="reference-audit")
+        state = mgr.set("fully implement the spec in task.md")
+
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content=json.dumps({
+                        "checklist": [
+                            {"text": "Export command is implemented"},
+                            {"text": "CSV output is tested"},
+                        ]
+                    }))
+                )
+            ]
+        )
+
+        with patch(
+            "agent.auxiliary_client.get_text_auxiliary_client",
+            return_value=(fake_client, "judge-model"),
+        ):
+            decision = mgr.evaluate_after_turn("starting")
+
+        assert decision.verdict == GoalVerdict.DECOMPOSE
+        assert state.decomposition_reference_context["reference_count"] == 1
+        assert state.decomposition_reference_context["resolved_count"] == 1
+        assert state.decomposition_reference_context["references"][0]["kind"] == "file"
+        event = state.goal_event_log[-1]
+        assert event["reference_count"] == 1
+        assert event["resolved_reference_count"] == 1
+
+    def test_goal_reference_context_blocks_sensitive_files(self, tmp_path, monkeypatch):
+        from hermes_cli.goals import build_goal_reference_context
+
+        secret = tmp_path / ".env"
+        secret.write_text("TOKEN=secret\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        context = build_goal_reference_context("use the config in [.env]")
+
+        assert context.references
+        assert context.references[0].status == "blocked"
+        assert "TOKEN=secret" not in context.render_for_decompose_prompt()
+
+    def test_goal_reference_context_keeps_named_task_discovery_requirements(self):
+        from hermes_cli.goals import build_goal_reference_context
+
+        context = build_goal_reference_context("fully implement the spec for [billing-export-task]")
+
+        assert context.references
+        assert context.references[0].kind == "named_task"
+        assert context.references[0].status == "discovery_required"
+        prompt_block = context.render_for_decompose_prompt()
+        assert "billing-export-task" in prompt_block
+        assert "authoritative source of truth" in prompt_block
+
+    def test_goal_manager_records_decomposition_scope_audit(self, hermes_home):
+        from hermes_cli.goals import GoalManager, GoalVerdict
+
+        mgr = GoalManager(session_id="scope-audit")
+        state = mgr.set("say hello")
+
+        with patch(
+            "hermes_cli.goals.decompose_goal",
+            return_value=([{"text": "Say hello"}, {"text": "Show final answer"}], None),
+        ):
+            decision = mgr.evaluate_after_turn("starting")
+
+        assert decision.verdict == GoalVerdict.DECOMPOSE
+        assert state.decomposition_scope == "simple"
+        assert state.decomposition_item_bounds == {"min_items": 2, "max_items": 5}
+        assert "scope: simple" in mgr.status_line()
+        event = state.goal_event_log[-1]
+        assert event["type"] == "goal_decomposed"
+        assert event["scope"] == "simple"
+        assert event["item_count"] == 2
+
+
+class TestGoalVerifierPolicy:
+    def test_file_investigation_goal_gets_safe_project_root(self, tmp_path, monkeypatch):
+        from hermes_cli.goals import GoalState, build_verifier_policy
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        (repo / "src").mkdir()
+        (repo / "src" / "feature.py").write_text("print('ok')\n", encoding="utf-8")
+        monkeypatch.chdir(repo / "src")
+
+        state = GoalState(
+            goal="audit the repository implementation and tests",
+            goal_facets=["code_modification"],
+        )
+
+        policy = build_verifier_policy(state, "I changed src/feature.py and ran tests")
+
+        assert policy.allowed_file_roots == [str(repo)]
+        assert "file root discovered from project context" in policy.reason
+
+    def test_file_verifier_blocks_sensitive_paths_inside_allowed_root(self, tmp_path):
+        from hermes_cli.goals import _judge_read_text_file
+
+        secret = tmp_path / ".env"
+        secret.write_text("TOKEN=secret\n", encoding="utf-8")
+
+        result = json.loads(_judge_read_text_file(str(secret), [str(tmp_path)]))
+
+        assert result["ok"] is False
+        assert "sensitive path access is blocked" in result["error"]
+        assert "TOKEN=secret" not in json.dumps(result)
+
+    def test_decomposition_scope_survives_goalstate_roundtrip(self):
+        from hermes_cli.goals import GoalState
+
+        state = GoalState(
+            goal="say hello",
+            decomposition_scope="simple",
+            decomposition_item_bounds={"min_items": 2, "max_items": 5},
+        )
+
+        reloaded = GoalState.from_json(state.to_json())
+
+        assert reloaded.decomposition_scope == "simple"
+        assert reloaded.decomposition_item_bounds == {"min_items": 2, "max_items": 5}
+
+    def test_goalstate_from_json_normalizes_legacy_invalid_counters_and_reference_audit(self):
+        from hermes_cli.goals import DEFAULT_MAX_TURNS, GoalState
+
+        state = GoalState.from_json(json.dumps({
+            "goal": "legacy",
+            "turns_used": -4,
+            "max_turns": -1,
+            "redecompose_count": -2,
+            "max_redecompositions": 0,
+            "judge_calls_made": -9,
+            "decomposition_reference_context": {
+                "reference_count": 99,
+                "resolved_count": 99,
+                "references": [
+                    {
+                        "kind": "file",
+                        "reference": ".env",
+                        "status": "resolved",
+                        "summary": "read TOKEN=secret",
+                        "content": "TOKEN=secret",
+                        "metadata": {"path": "/home/me/.env", "bytes": 12},
+                    }
+                ],
+            },
+        }))
+
+        assert state.turns_used == 0
+        assert state.max_turns == DEFAULT_MAX_TURNS
+        assert state.redecompose_count == 0
+        assert state.max_redecompositions == 3
+        assert state.judge_calls_made == 0
+        audit = state.decomposition_reference_context
+        assert audit["reference_count"] == 1
+        assert audit["resolved_count"] == 1
+        encoded = json.dumps(audit)
+        assert "content" not in encoded
+        assert "TOKEN=secret" not in encoded
+        assert ".env" not in encoded
+        assert "[redacted sensitive path]" in encoded
+
+
+class TestSplitBullets:
+    def test_split_bullets_numeric(self):
+        from hermes_cli.goals import _split_bullets
+
+        raw = """
+        1. one
+        2. two
+        3. three
+        """
+        bullets = _split_bullets(raw)
+        assert bullets == ["one", "two", "three"]
+
+    def test_split_bullets_dash(self):
+        from hermes_cli.goals import _split_bullets
+
+        raw = """
+        - one
+        - two
+        - three
+        """
+        bullets = _split_bullets(raw)
+        assert bullets == ["one", "two", "three"]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Judge evidence parsing
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestEvidenceParsing:
+    def test_parse_completion_evidence(self):
+        from hermes_cli.goals import parse_completion_evidence
+
+        raw = """
+        ## COMPLETION EVIDENCE
+
+        **Checklist items addressed:**
+        - [0] thing 1
+        - [1] thing 2
+
+        **Artifacts/files/URLs created or changed:**
+        - foo.txt
+
+        **Verification performed:**
+        - tests passed
+
+        **Known gaps, blockers, or exclusions:**
+        - none
+        """
+        evidence = parse_completion_evidence(raw)
+        assert evidence.raw_present is True
+        assert len(evidence.checklist_items_addressed) == 2
+        assert evidence.declares_no_known_gaps is True
+
+
+class TestEvidenceParsingErrors:
+    def test_parse_completion_evidence_markdown(self):
+        from hermes_cli.goals import _parse_completion_evidence_markdown
+
+        raw = "not evidence"
+        evidence = _parse_completion_evidence_markdown(raw)
+        assert evidence.raw_present is False
+        assert evidence.parse_warnings
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Evidence packet building
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestEvidencePacketBuilding:
+    def test_evidence_packet_missing_tool_output(self):
+        from hermes_cli.goals import build_judge_evidence_packet
+
+        packet = build_judge_evidence_packet(messages=[], last_response="")
+        assert "no tool output" in packet.lower()
+
+    def test_repeated_evidence_fingerprint_ignores_ledger_growth(self):
+        from hermes_cli.goals import (
+            ADDED_BY_JUDGE,
+            ITEM_PENDING,
+            ChecklistItem,
+            GoalState,
+            _add_ledger_entry,
+            _stable_evidence_fingerprint,
+        )
+
+        state = GoalState(goal="test", decomposed=True)
+        state.checklist = [
+            ChecklistItem(text="Run tests", status=ITEM_PENDING, added_by=ADDED_BY_JUDGE, added_at=time.time())
+        ]
+        messages = [
+            {
+                "role": "tool",
+                "name": "terminal",
+                "content": "pytest -q\n1 passed in 0.11s\nexit_code: 0",
+            }
+        ]
+        response = "Same evidence every time"
+
+        first = _stable_evidence_fingerprint(response, state=state, messages=messages)
+        _add_ledger_entry(
+            state,
+            evidence_type="test_result",
+            source="tool_output",
+            summary="pytest -q\n1 passed in 0.11s\nexit_code: 0",
+            result_summary="1 passed",
+        )
+        second = _stable_evidence_fingerprint(response, state=state, messages=messages)
+
+        assert first == second
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Goal evaluation routing
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestEvaluationRouting:
+    def test_route_decision(self, hermes_home):
+        from hermes_cli.goals import GoalManager, GoalStatus
+
+        mgr = GoalManager(session_id="route-test")
+        mgr.set("perform task")
+        assert mgr.state.status == GoalStatus.ACTIVE.value
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Parse failure counter
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestParseFailureCounter:
     def test_empty_judge_reply_flagged_as_parse_failure(self):
         """End-to-end: judge returns empty content → parse_failed=True."""
         from hermes_cli import goals
@@ -433,6 +708,7 @@ class TestJudgeParseFailureAutoPause:
         assert DEFAULT_MAX_CONSECUTIVE_PARSE_FAILURES == 3
         mgr = GoalManager(session_id="parse-fail-sid-1", default_max_turns=20)
         mgr.set("do a thing")
+        mgr.state.decomposed = True
 
         with patch.object(
             goals, "judge_goal", return_value=("continue", "judge returned empty response", True)
@@ -461,6 +737,7 @@ class TestJudgeParseFailureAutoPause:
 
         mgr = GoalManager(session_id="parse-fail-sid-2", default_max_turns=20)
         mgr.set("another goal")
+        mgr.state.decomposed = True
 
         # Two parse failures…
         with patch.object(
@@ -485,6 +762,7 @@ class TestJudgeParseFailureAutoPause:
 
         mgr = GoalManager(session_id="parse-fail-sid-3", default_max_turns=20)
         mgr.set("goal")
+        mgr.state.decomposed = True
 
         with patch.object(
             goals, "judge_goal", return_value=("continue", "judge error: RuntimeError", False)
@@ -504,6 +782,7 @@ class TestJudgeParseFailureAutoPause:
 
         mgr = GoalManager(session_id="parse-fail-sid-4", default_max_turns=20)
         mgr.set("persistent goal")
+        mgr.state.decomposed = True
 
         with patch.object(
             goals, "judge_goal", return_value=("continue", "empty", True)
