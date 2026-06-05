@@ -56,6 +56,7 @@ from agent.prompt_caching import apply_anthropic_cache_control
 from agent.retry_utils import jittered_backoff
 from agent.trajectory import has_incomplete_scratchpad
 from agent.usage_pricing import estimate_usage_cost, normalize_usage
+from agent.prompt_builder import extract_skills_system_prompt_fingerprint
 from hermes_constants import PARTIAL_STREAM_STUB_ID
 from hermes_logging import set_session_context
 from tools.skill_provenance import set_current_write_origin
@@ -139,6 +140,49 @@ def _ra():
     """
     import run_agent
     return run_agent
+
+
+def _current_skills_system_prompt_fingerprint(agent: Any) -> Optional[str]:
+    valid_tool_names = set(getattr(agent, "valid_tool_names", None) or set())
+    if not any(name in valid_tool_names for name in ("skills_list", "skill_view", "skill_manage")):
+        return None
+
+    try:
+        avail_toolsets = {
+            toolset
+            for toolset in (
+                _ra().get_toolset_for_tool(tool_name) for tool_name in valid_tool_names
+            )
+            if toolset
+        }
+        prompt = _ra().build_skills_system_prompt(
+            available_tools=valid_tool_names,
+            available_toolsets=avail_toolsets,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not rebuild skills prompt fingerprint for session %s: %s",
+            getattr(agent, "session_id", "unknown"),
+            exc,
+        )
+        return "__stale_unavailable__"
+
+    return extract_skills_system_prompt_fingerprint(prompt)
+
+
+def _stored_system_prompt_has_stale_skills(agent: Any, stored_prompt: str) -> bool:
+    if "<available_skills>" not in (stored_prompt or ""):
+        return False
+
+    stored_fingerprint = extract_skills_system_prompt_fingerprint(stored_prompt)
+    if not stored_fingerprint:
+        return True
+
+    current_fingerprint = _current_skills_system_prompt_fingerprint(agent)
+    if not current_fingerprint:
+        return True
+
+    return stored_fingerprint != current_fingerprint
 
 
 def _nous_entitlement_message(capability: str) -> str:
@@ -288,11 +332,17 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
                 agent.session_id, exc,
             )
 
-    if stored_prompt:
+    if stored_prompt and not _stored_system_prompt_has_stale_skills(agent, stored_prompt):
         # Continuing session — reuse the exact system prompt from the
         # previous turn so the Anthropic cache prefix matches.
         agent._cached_system_prompt = stored_prompt
         return
+    if stored_prompt:
+        logger.info(
+            "Stored system prompt for session %s has a stale skills snapshot; "
+            "rebuilding so the skills inventory is current.",
+            agent.session_id,
+        )
 
     if conversation_history and stored_state in ("null", "empty"):
         # Continuing session whose stored prompt is unusable.  The
