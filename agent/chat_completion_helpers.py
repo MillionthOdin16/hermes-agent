@@ -39,6 +39,17 @@ from utils import base_url_host_matches, base_url_hostname
 logger = logging.getLogger(__name__)
 
 
+class TTFBTimeout(Exception):
+    """Raised when a streaming response misses its first-byte deadline."""
+
+    def __init__(self, deadline: float, elapsed: float):
+        self.deadline = deadline
+        self.elapsed = elapsed
+        super().__init__(
+            f"TTFB deadline exceeded: {elapsed:.1f}s elapsed, deadline was {deadline:.1f}s"
+        )
+
+
 def _ra():
     """Lazy ``run_agent`` reference.
 
@@ -2312,6 +2323,9 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
             _stream_stale_timeout = max(_stream_stale_timeout_base, 240.0)
         else:
             _stream_stale_timeout = _stream_stale_timeout_base
+    _ttfb_timeout = float(os.getenv("HERMES_TTFB_TIMEOUT", "0") or "0")
+    if _ttfb_timeout > 0 and agent.base_url and is_local_endpoint(agent.base_url):
+        _ttfb_timeout = 0.0
 
     t = threading.Thread(target=_call, daemon=True)
     t.start()
