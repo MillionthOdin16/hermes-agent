@@ -22,6 +22,7 @@ from hermes_cli.config import (
     save_env_value_secure,
     sanitize_env_file,
     _sanitize_env_lines,
+    _normalize_custom_provider_entry,
 )
 
 
@@ -767,6 +768,23 @@ class TestCustomProviderCompatibility:
                 "provider_key": "my-provider",
             }
         ]
+
+    def test_provider_type_key_is_accepted_without_warning(self, caplog):
+        """OpenAI-compatible provider configs commonly include ``type``."""
+        caplog.set_level("WARNING")
+
+        normalized = _normalize_custom_provider_entry(
+            {
+                "name": "llama_cpp",
+                "type": "llama_cpp",
+                "base_url": "http://localhost:8080/v1",
+                "api_key": "",
+            },
+            provider_key="llama_cpp",
+        )
+
+        assert normalized is not None
+        assert "providers.llama_cpp: unknown config keys ignored: type" not in caplog.text
 
     def test_dedup_across_legacy_and_providers(self, tmp_path):
         """Same name+url in both schemas should not produce duplicates."""
