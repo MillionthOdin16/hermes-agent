@@ -145,7 +145,15 @@ export function useMainApp(gw: GatewayClient) {
       return
     }
 
-    const sync = () => setCols(stdout.columns ?? 80)
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const sync = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = undefined
+        setCols(stdout.columns ?? 80)
+      }, 100)
+    }
 
     stdout.on('resize', sync)
 
@@ -154,6 +162,7 @@ export function useMainApp(gw: GatewayClient) {
     }
 
     return () => {
+      clearTimeout(timer)
       stdout.off('resize', sync)
 
       if (stdout.isTTY) {
@@ -207,6 +216,7 @@ export function useMainApp(gw: GatewayClient) {
   const msgIdsRef = useRef(new WeakMap<Msg, string>())
   const msgIdSeqRef = useRef(0)
   const heightCachesRef = useRef(new Map<string, Map<string, number>>())
+  const prevCacheKeyRef = useRef<string>('')
 
   colsRef.current = cols
   historyItemsRef.current = historyItems
@@ -330,7 +340,7 @@ export function useMainApp(gw: GatewayClient) {
     let cache = heightCachesRef.current.get(heightCacheKey)
 
     if (!cache) {
-      cache = new Map()
+      cache = new Map(heightCachesRef.current.get(prevCacheKeyRef.current) ?? [])
       heightCachesRef.current.set(heightCacheKey, cache)
 
       if (heightCachesRef.current.size > MAX_HEIGHT_CACHE_BUCKETS) {
@@ -338,6 +348,7 @@ export function useMainApp(gw: GatewayClient) {
       }
     }
 
+    prevCacheKeyRef.current = heightCacheKey
     return cache
   }, [heightCacheKey])
 
