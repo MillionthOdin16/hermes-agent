@@ -5281,6 +5281,11 @@ class TelegramAdapter(BasePlatformAdapter):
         they arrive within a few hundred milliseconds.  This method
         concatenates them and waits for a short quiet period before
         dispatching the combined message.
+
+        Command messages (starting with ``/``) are also routed through
+        here so that split ``/cmd <long args>`` messages are reassembled
+        before dispatch.  The flush logic detects the leading ``/`` and
+        promotes the batch to COMMAND type.
         """
         key = self._text_batch_key(event)
         existing = self._pending_text_batches.get(key)
@@ -5291,7 +5296,12 @@ class TelegramAdapter(BasePlatformAdapter):
         else:
             # Append text from the follow-up chunk
             if event.text:
-                existing.text = f"{existing.text}\n{event.text}" if existing.text else event.text
+                # When appending to a command batch, clean @botname from
+                # continuation chunks so the args don't carry a stale mention.
+                append_text = event.text
+                if existing.message_type == MessageType.COMMAND:
+                    append_text = self._clean_bot_trigger_text(append_text) or append_text
+                existing.text = f"{existing.text}\n{append_text}" if existing.text else append_text
             existing._last_chunk_len = chunk_len  # type: ignore[attr-defined]
             # Merge any media that might be attached
             if event.media_urls:
@@ -5311,6 +5321,10 @@ class TelegramAdapter(BasePlatformAdapter):
 
         Uses a longer delay when the latest chunk is near Telegram's 4096-char
         split point, since a continuation chunk is almost certain.
+
+        If the reassembled text starts with ``/`` the batch is promoted to
+        COMMAND type so the gateway routes it through the command handler
+        rather than the LLM conversation path.
         """
         current_task = asyncio.current_task()
         try:
@@ -5341,9 +5355,12 @@ class TelegramAdapter(BasePlatformAdapter):
             event = self._pending_text_batches.pop(key, None)
             if not event:
                 return
+            # Promote to COMMAND if the reassembled text starts with /
+            if event.text and event.text.startswith("/"):
+                event.message_type = MessageType.COMMAND
             logger.info(
-                "[Telegram] Flushing text batch %s (%d chars)",
-                key, len(event.text or ""),
+                "[Telegram] Flushing text batch %s (%d chars, type=%s)",
+                key, len(event.text or ""), event.message_type.name,
             )
             await self.handle_message(event)
         finally:
