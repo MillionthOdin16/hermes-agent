@@ -35,6 +35,21 @@ DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
 SCHEMA_VERSION = 14
 
+_ASCII_CTRL_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+_UNICODE_CTRL_RE = re.compile(r'[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]')
+_WHITESPACE_RE = re.compile(r'\s+')
+
+_TITLE_NUMBER_RE = re.compile(r'^(.*?) #(\d+)$')
+_SUFFIX_NUMBER_RE = re.compile(r'^.* #(\d+)$')
+
+_QUOTED_PHRASE_RE = re.compile(r'"[^"]*"')
+_FTS5_SPECIAL_RE = re.compile(r'[+{}()\"^]')
+_REPEATED_STAR_RE = re.compile(r"\*+")
+_LEADING_STAR_RE = re.compile(r"(^|\s)\*")
+_START_BOOL_RE = re.compile(r"^(AND|OR|NOT)\b\s*", re.IGNORECASE)
+_END_BOOL_RE = re.compile(r"\s+(AND|OR|NOT)\s*$", re.IGNORECASE)
+_DOTTED_HYPHENATED_RE = re.compile(r"\b(\w+(?:[._-]\w+)+)\b")
+
 # ---------------------------------------------------------------------------
 # WAL-compatibility fallback
 # ---------------------------------------------------------------------------
@@ -1366,19 +1381,16 @@ class SessionDB:
         # Remove ASCII control characters (0x00-0x1F, 0x7F) but keep
         # whitespace chars (\t=0x09, \n=0x0A, \r=0x0D) so they can be
         # normalized to spaces by the whitespace collapsing step below
-        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', title)
+        cleaned = _ASCII_CTRL_RE.sub('', title)
 
         # Remove problematic Unicode control characters:
         # - Zero-width chars (U+200B-U+200F, U+FEFF)
         # - Directional overrides (U+202A-U+202E, U+2066-U+2069)
         # - Object replacement (U+FFFC), interlinear annotation (U+FFF9-U+FFFB)
-        cleaned = re.sub(
-            r'[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]',
-            '', cleaned,
-        )
+        cleaned = _UNICODE_CTRL_RE.sub('', cleaned)
 
         # Collapse internal whitespace runs and strip
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = _WHITESPACE_RE.sub(' ', cleaned).strip()
 
         if not cleaned:
             return None
@@ -1489,7 +1501,7 @@ class SessionDB:
         the highest existing number and increments.
         """
         # Strip existing #N suffix to find the true base
-        match = re.match(r'^(.*?) #(\d+)$', base_title)
+        match = _TITLE_NUMBER_RE.match(base_title)
         if match:
             base = match.group(1)
         else:
@@ -1511,7 +1523,7 @@ class SessionDB:
         # Find the highest number
         max_num = 1  # The unnumbered original counts as #1
         for t in existing:
-            m = re.match(r'^.* #(\d+)$', t)
+            m = _SUFFIX_NUMBER_RE.match(t)
             if m:
                 max_num = max(max_num, int(m.group(1)))
 
@@ -2636,20 +2648,20 @@ class SessionDB:
             _quoted_parts.append(m.group(0))
             return f"\x00Q{len(_quoted_parts) - 1}\x00"
 
-        sanitized = re.sub(r'"[^"]*"', _preserve_quoted, query)
+        sanitized = _QUOTED_PHRASE_RE.sub(_preserve_quoted, query)
 
         # Step 2: Strip remaining (unmatched) FTS5-special characters
-        sanitized = re.sub(r'[+{}()\"^]', " ", sanitized)
+        sanitized = _FTS5_SPECIAL_RE.sub(" ", sanitized)
 
         # Step 3: Collapse repeated * (e.g. "***") into a single one,
         # and remove leading * (prefix-only needs at least one char before *)
-        sanitized = re.sub(r"\*+", "*", sanitized)
-        sanitized = re.sub(r"(^|\s)\*", r"\1", sanitized)
+        sanitized = _REPEATED_STAR_RE.sub("*", sanitized)
+        sanitized = _LEADING_STAR_RE.sub(r"\1", sanitized)
 
         # Step 4: Remove dangling boolean operators at start/end that would
         # cause syntax errors (e.g. "hello AND" or "OR world")
-        sanitized = re.sub(r"(?i)^(AND|OR|NOT)\b\s*", "", sanitized.strip())
-        sanitized = re.sub(r"(?i)\s+(AND|OR|NOT)\s*$", "", sanitized.strip())
+        sanitized = _START_BOOL_RE.sub("", sanitized.strip())
+        sanitized = _END_BOOL_RE.sub("", sanitized.strip())
 
         # Step 5: Wrap unquoted dotted and/or hyphenated terms in double
         # quotes.  FTS5's tokenizer splits on dots and hyphens, turning
@@ -2657,7 +2669,7 @@ class SessionDB:
         # Quoting preserves phrase semantics.  A single pass avoids the
         # double-quoting bug that would occur if dotted, hyphenated and underscored
         # patterns were applied sequentially (e.g. ``my-app.config``).
-        sanitized = re.sub(r"\b(\w+(?:[._-]\w+)+)\b", r'"\1"', sanitized)
+        sanitized = _DOTTED_HYPHENATED_RE.sub(r'"\1"', sanitized)
 
         # Step 6: Restore preserved quoted phrases
         for i, quoted in enumerate(_quoted_parts):
