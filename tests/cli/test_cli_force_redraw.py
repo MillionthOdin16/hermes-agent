@@ -71,23 +71,25 @@ class TestForceFullRedraw:
             "invalidate",
         ]
 
-    def test_resize_preserves_scrollback_and_resets_renderer(self, bare_cli, monkeypatch):
+    def test_resize_preserves_scrollback_and_does_not_replay_lossy_history(self, bare_cli, monkeypatch):
         """Resize recovery must NOT erase screen or scrollback.
 
         The startup banner lives in normal terminal scrollback (printed
         before prompt_toolkit owns the chrome).  Clearing scrollback on
         SIGWINCH removes it and ``_replay_output_history`` cannot
-        reconstruct it.  The fix is to only reset the renderer cache and
-        let ``original_on_resize`` recalculate layout.
+        reconstruct it. The fix is to let ``original_on_resize``
+        recalculate layout and invalidate without renderer reset or replay.
 
         Additionally, ``_status_bar_suppressed_after_resize`` must be set
         so the input rules and status bar hide until the next user input,
         preventing duplicated-bar artifacts on column shrink (#19280).
         """
         app = MagicMock()
+        out = app.renderer.output
         events = []
         app.renderer.reset.side_effect = lambda **_: events.append("renderer_reset")
         app.invalidate.side_effect = lambda: events.append("invalidate")
+        monkeypatch.setattr(cli_mod, "_replay_output_history", lambda: events.append("replay"))
         original_on_resize = lambda: events.append("original_resize")
 
         # bare_cli skips __init__, so seed the attribute the way __init__ would.
@@ -95,14 +97,14 @@ class TestForceFullRedraw:
         bare_cli._recover_after_resize(app, original_on_resize)
 
         assert events == [
-            "renderer_reset",
-            "invalidate",
             "original_resize",
+            "invalidate",
         ]
         # Must NOT clear the screen or scrollback — those destroy the banner.
-        app.renderer.output.erase_screen.assert_not_called()
-        app.renderer.output.write_raw.assert_not_called()
-        app.renderer.output.cursor_goto.assert_not_called()
+        out.erase_screen.assert_not_called()
+        out.write_raw.assert_not_called()
+        out.cursor_goto.assert_not_called()
+        app.renderer.reset.assert_not_called()
         # Status bar / input rules must be suppressed until the next prompt.
         assert bare_cli._status_bar_suppressed_after_resize is True
 
