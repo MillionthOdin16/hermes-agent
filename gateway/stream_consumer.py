@@ -149,6 +149,7 @@ class GatewayStreamConsumer:
         self._last_sent_text = ""   # Track last-sent text to skip redundant edits
         self._fallback_final_send = False
         self._fallback_prefix = ""
+        self._last_fallback_send = 0.0  # Progressive fallback send throttle
         self._flood_strikes = 0         # Consecutive flood-control edit failures
         self._current_edit_interval = self.cfg.edit_interval  # Adaptive backoff
         self._final_response_sent = False
@@ -261,6 +262,7 @@ class GatewayStreamConsumer:
         self._last_sent_text = ""
         self._fallback_final_send = False
         self._fallback_prefix = ""
+        self._last_fallback_send = 0.0
         # #29346: a tool/segment boundary means what we delivered was an interim
         # preamble, not the final answer — clear the flags so a premature setter
         # can't fool the gateway. Safe: got_done returns before any reset, and
@@ -644,6 +646,44 @@ class GatewayStreamConsumer:
                         await self._flush_segment_tail_on_edit_failure()
                     self._reset_segment_state(preserve_no_edit=True)
 
+                # Progressive fallback: when edits are disabled by flood
+                # control, periodically send accumulated content as fresh
+                # messages so the user sees progress instead of silence.
+                _FALLBACK_SEND_INTERVAL = 5.0
+                if (
+                    self._fallback_final_send
+                    and not self._edit_supported
+                    and self._accumulated
+                ):
+                    _fb_elapsed = time.monotonic() - self._last_fallback_send
+                    if _fb_elapsed >= _FALLBACK_SEND_INTERVAL:
+                        _prefix = self._fallback_prefix or self._visible_prefix()
+                        _tail = self._accumulated
+                        if _prefix and _tail.startswith(_prefix):
+                            _tail = _tail[len(_prefix):].lstrip("\n")
+                        _tail = self._clean_for_display(_tail)
+                        if _tail.strip():
+                            try:
+                                _result = await self.adapter.send(
+                                    chat_id=self.chat_id,
+                                    content=_tail,
+                                    metadata=self.metadata,
+                                )
+                                if _result.success:
+                                    _new_prefix = self._clean_for_display(
+                                        self._accumulated
+                                    )
+                                    if self.cfg.cursor and _new_prefix.endswith(self.cfg.cursor):
+                                        _new_prefix = _new_prefix[:-len(self.cfg.cursor)]
+                                    self._fallback_prefix = _new_prefix
+                                    self._already_sent = True
+                                    self._notify_new_message()
+                            except Exception as _fb_err:
+                                logger.debug(
+                                    "Progressive fallback send error: %s", _fb_err,
+                                )
+                            self._last_fallback_send = time.monotonic()
+
                 await asyncio.sleep(0.05)  # Small yield to not busy-loop
 
         except asyncio.CancelledError:
@@ -865,6 +905,10 @@ class GatewayStreamConsumer:
             # Each fallback chunk is a fresh platform message — notify
             # so any stale tool-progress bubble gets closed off.
             self._notify_new_message()
+            # Inter-chunk delay to avoid triggering send flood control
+            # when delivering multiple continuation chunks.
+            if len(chunks) > 1:
+                await asyncio.sleep(1.0)
 
         # Remove the frozen partial message so the user only sees the
         # complete fallback response.  Best-effort — if the platform doesn't
@@ -1308,6 +1352,7 @@ class GatewayStreamConsumer:
                         self._fallback_final_send = True
                         self._edit_supported = False
                         self._already_sent = True
+                        self._last_fallback_send = time.monotonic()
                         # Best-effort: strip the cursor from the last visible
                         # message so the user doesn't see a stuck ▉.
                         await self._try_strip_cursor()
@@ -1339,6 +1384,7 @@ class GatewayStreamConsumer:
                     if not result.message_id:
                         self._fallback_prefix = self._visible_prefix()
                         self._fallback_final_send = True
+                        self._last_fallback_send = time.monotonic()
                         # Sentinel prevents re-entering the first-send path on
                         # every delta/tool boundary when platforms accept a
                         # message but do not return an editable message id.
