@@ -1,0 +1,4 @@
+## 2026-06-05 - Fix Command Injection in TUI Gateway RPC (`shell.exec`)
+**Vulnerability:** The `shell.exec` method in `tui_gateway/server.py` passed unsanitized user commands to `subprocess.run(..., shell=True)`, allowing command injection if a payload evaded `detect_dangerous_command`.
+**Learning:** Even when security controls like `detect_dangerous_command` are in place, relying on `shell=True` for arbitrary command execution creates a critical defense-in-depth failure, as shell parsers have numerous bypass vectors.
+**Prevention:** Always use `shell=False` and parse commands properly (e.g. `shlex.split()`) before passing them to subprocess execution routines, avoiding shell meta-character evaluation.
