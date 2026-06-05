@@ -83,6 +83,10 @@ DEFAULT_MAX_JUDGE_TOOL_CALLS = 5
 # doesn't blow up its own context. Judge can paginate if needed.
 _JUDGE_READ_FILE_MAX_LINES = 400
 _JUDGE_READ_FILE_MAX_CHARS = 32_000
+_CONTINUATION_GOAL_MAX_CHARS = 4000
+_CONTINUATION_CHECKLIST_MAX_CHARS = 8000
+_CONTINUATION_FEEDBACK_MAX_CHARS = 4000
+_CONTINUATION_SUBGOALS_MAX_CHARS = 4000
 
 
 # Status constants ────────────────────────────────────────────────────
@@ -632,6 +636,16 @@ CONTINUATION_PROMPT_WITH_CHECKLIST_TEMPLATE = (
     "Important: Provide all evidence in this response. Prior turns may have "
     "been compacted and the judge can only see the current turn's content. "
     "Do not reference evidence from prior turns — include it inline here.\n\n"
+    f"{_STRUCTURED_COMPLETION_INSTRUCTION}"
+)
+
+CONTINUATION_PROMPT_WITH_SUBGOALS_TEMPLATE = (
+    "[Continuing toward your standing goal]\n"
+    "Goal: {goal}\n\n"
+    "Subgoals:\n"
+    "{subgoals_block}\n\n"
+    "Continue working toward the subgoals above. Take the next concrete step. "
+    "If you are blocked and need input from the user, say so clearly and stop.\n\n"
     f"{_STRUCTURED_COMPLETION_INSTRUCTION}"
 )
 
@@ -2745,6 +2759,29 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "… [truncated]"
+
+
+def _truncate_head_tail(text: str, limit: int, *, label: str = "text") -> str:
+    """Bound long text while preserving both the opening and final details."""
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    marker = (
+        f"\n... [middle of {label} truncated; full value remains stored in "
+        "goal state and available through /goal trace] ...\n"
+    )
+    if limit <= len(marker) + 40:
+        return _truncate(text, limit)
+    remaining = limit - len(marker)
+    head_len = remaining // 2
+    tail_len = remaining - head_len
+    return f"{text[:head_len]}{marker}{text[-tail_len:]}"
+
+
+def _bounded_continuation_text(text: str, limit: int, *, label: str) -> str:
+    """Bound synthetic continuation prompt fields without mutating goal state."""
+    return _truncate_head_tail(str(text or ""), limit, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -7150,12 +7187,43 @@ class GoalManager:
     def next_continuation_prompt(self) -> Optional[str]:
         if not self._state or self._state.status != "active":
             return None
+        goal_for_prompt = _bounded_continuation_text(
+            self._state.goal,
+            _CONTINUATION_GOAL_MAX_CHARS,
+            label="goal",
+        )
         if self._state.subgoals:
             return CONTINUATION_PROMPT_WITH_SUBGOALS_TEMPLATE.format(
-                goal=self._state.goal,
-                subgoals_block=self._state.render_subgoals_block(),
+                goal=goal_for_prompt,
+                subgoals_block=_bounded_continuation_text(
+                    self._state.render_subgoals_block(),
+                    _CONTINUATION_SUBGOALS_MAX_CHARS,
+                    label="subgoals",
+                ),
             )
-        return CONTINUATION_PROMPT_TEMPLATE.format(goal=self._state.goal)
+        if self._state.checklist:
+            done, total, _impossible, _pending = self._state.checklist_counts()
+            feedback_block = _bounded_continuation_text(
+                self._state.render_feedback_block(),
+                _CONTINUATION_FEEDBACK_MAX_CHARS,
+                label="goal feedback",
+            )
+            return CONTINUATION_PROMPT_WITH_CHECKLIST_TEMPLATE.format(
+                goal=goal_for_prompt,
+                session_id=self.session_id,
+                done=done,
+                total=total,
+                checklist=_bounded_continuation_text(
+                    self._state.render_checklist(numbered=False),
+                    _CONTINUATION_CHECKLIST_MAX_CHARS,
+                    label="checklist",
+                ),
+                feedback_block=feedback_block,
+            )
+        return CONTINUATION_PROMPT_TEMPLATE.format(
+            goal=goal_for_prompt,
+            session_id=self.session_id,
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────
