@@ -248,3 +248,43 @@ class TestPluginContextEngineSlot:
             assert get_plugin_context_engine() is engine
         finally:
             plugins_mod._plugin_manager = old_mgr
+
+    def test_get_plugin_context_engine_returns_clone_when_supported(self):
+        from hermes_cli.plugins import PluginManager, get_plugin_context_engine
+        import hermes_cli.plugins as plugins_mod
+
+        class CloneableEngine(StubEngine):
+            def __init__(self):
+                super().__init__()
+                self.clone_count = 0
+                self.name_value = "stub"
+
+            @property
+            def name(self):
+                return self.name_value
+
+            def clone_for_session(self):
+                self.clone_count += 1
+                clone = CloneableEngine()
+                clone.name_value = "stub-clone"
+                return clone
+
+        old_mgr = plugins_mod._plugin_manager
+        try:
+            mgr = PluginManager()
+            plugins_mod._plugin_manager = mgr
+
+            engine = CloneableEngine()
+            mgr._context_engine = engine
+
+            first = get_plugin_context_engine()
+            second = get_plugin_context_engine()
+
+            assert first is not engine
+            assert second is not engine
+            assert first is not second
+            assert first.name == "stub-clone"
+            assert second.name == "stub-clone"
+            assert engine.clone_count == 2
+        finally:
+            plugins_mod._plugin_manager = old_mgr
