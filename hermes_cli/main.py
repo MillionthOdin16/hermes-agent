@@ -6926,6 +6926,25 @@ def _run_npm_install_deterministic(
     lockfile — repeatedly.
     """
     lockfile = cwd / "package-lock.json"
+    sentinel = cwd / "node_modules" / ".package-lock.json"
+
+    # Fast path: if node_modules is already in sync with the lockfile, skip.
+    if lockfile.exists() and sentinel.exists():
+        try:
+            if sentinel.stat().st_mtime >= lockfile.stat().st_mtime:
+                # Lockfile hasn't changed since last install — verify with a
+                # hash to catch touch-only mtime changes.
+                import hashlib
+                lock_hash = hashlib.sha256(lockfile.read_bytes()).hexdigest()[:16]
+                marker = cwd / "node_modules" / ".hermes_lock_hash"
+                if marker.exists() and marker.read_text().strip() == lock_hash:
+                    result = subprocess.CompletedProcess(
+                        [npm, "ci"], 0, "(skipped — deps up to date)", ""
+                    )
+                    return result
+        except OSError:
+            pass  # stat/read failed — fall through to install
+
     if lockfile.exists():
         ci_cmd = [npm, "ci", *extra_args]
         ci_result = subprocess.run(
@@ -6938,11 +6957,19 @@ def _run_npm_install_deterministic(
             check=False,
         )
         if ci_result.returncode == 0:
+            # Write lockfile hash marker so next update can skip.
+            try:
+                import hashlib
+                lock_hash = hashlib.sha256(lockfile.read_bytes()).hexdigest()[:16]
+                marker = cwd / "node_modules" / ".hermes_lock_hash"
+                marker.write_text(lock_hash)
+            except OSError:
+                pass
             return ci_result
         # Fall through to `npm install` — lockfile may be out of sync on a
         # WIP fork/branch, or `npm ci` may not be available on very old npm.
     install_cmd = [npm, "install", *extra_args]
-    return subprocess.run(
+    result = subprocess.run(
         install_cmd,
         cwd=cwd,
         capture_output=capture_output,
@@ -6951,6 +6978,16 @@ def _run_npm_install_deterministic(
         errors="replace",
         check=False,
     )
+    # Write lockfile hash marker after successful install too.
+    if result.returncode == 0 and lockfile.exists():
+        try:
+            import hashlib
+            lock_hash = hashlib.sha256(lockfile.read_bytes()).hexdigest()[:16]
+            marker = cwd / "node_modules" / ".hermes_lock_hash"
+            marker.write_text(lock_hash)
+        except OSError:
+            pass
+    return result
 
 
 def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
@@ -8489,6 +8526,11 @@ def _sync_with_upstream_if_needed(git_cmd: list[str], cwd: Path) -> None:
         print("ℹ Your fork is not tracking the official Hermes repository.")
         print("  This means you may miss updates from NousResearch/hermes-agent.")
         print()
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            print("  Non-interactive session — skipping upstream prompt.")
+            print("  Add manually: git remote add upstream https://github.com/NousResearch/hermes-agent.git")
+            _mark_skip_upstream_prompt()
+            return
         try:
             response = (
                 input("Add official repo as 'upstream' remote? [Y/n]: ").strip().lower()
@@ -9129,9 +9171,24 @@ def _install_python_dependencies_with_optional_fallback(
 
     _install(["install", "-e", "."])
 
+    # Try batching all extras in one invocation first (much faster than
+    # one pip invocation per extra — each invocation has 10-30s overhead
+    # for dependency resolution).
+    all_extras = _load_installable_optional_extras(group=group)
+    if all_extras:
+        batch_spec = ",".join(all_extras)
+        try:
+            _install(["install", "-e", f".[{batch_spec}]"])
+            print(f"  ✓ Reinstalled optional extras: {', '.join(all_extras)}")
+            return
+        except subprocess.CalledProcessError:
+            pass  # fall through to individual installs
+
+    # Batch failed — install extras one at a time, skipping the ones
+    # that fail so the rest still get installed.
     failed_extras: list[str] = []
     installed_extras: list[str] = []
-    for extra in _load_installable_optional_extras(group=group):
+    for extra in all_extras:
         try:
             _install(["install", "-e", f".[{extra}]"])
             installed_extras.append(extra)
@@ -9616,6 +9673,20 @@ def _install_hangup_protection(gateway_mode: bool = False):
         logs_dir = _get_hermes_home() / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / "update.log"
+
+        # Truncate log if it exceeds 1MB to prevent unbounded growth.
+        try:
+            if log_path.exists() and log_path.stat().st_size > 1_000_000:
+                # Keep the last 100KB
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(-100_000, 2)
+                    tail = f.read()
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write("... (truncated)\n")
+                    f.write(tail)
+        except OSError:
+            pass  # non-fatal
+
         log_file = open(log_path, "a", buffering=1, encoding="utf-8")
 
         import datetime as _dt
@@ -10646,22 +10717,26 @@ def _cmd_update_impl(args, gateway_mode: bool):
         except Exception as e:
             logger.debug("Skills sync during update failed: %s", e)
 
-        # Sync bundled skills to all profiles (including the active one).
-        # seed_profile_skills() uses subprocess with an explicit HERMES_HOME so
-        # it is not affected by sync_skills()'s module-level HERMES_HOME cache,
-        # which means the active profile is reliably synced regardless of whether
-        # the caller's HERMES_HOME env var points at the default or a named profile.
+        # Sync bundled skills to all profiles EXCEPT the active one
+        # (already synced by sync_skills() above).
         try:
             from hermes_cli.profiles import (
                 list_profiles,
+                get_active_profile,
                 seed_profile_skills,
             )
 
+            active_name = get_active_profile()
             all_profiles = list_profiles()
-            if all_profiles:
+            other_profiles = [p for p in all_profiles if p.name != active_name]
+            if other_profiles:
                 print()
-                print("→ Syncing bundled skills to all profiles...")
-                for p in all_profiles:
+                print("→ Syncing bundled skills to other profiles...")
+                # seed_profile_skills spawns sys.executable; if the venv was
+                # just rebuilt above, wait for pyvenv.cfg before the loop so
+                # the children don't abort with "No pyvenv.cfg file".
+                _wait_for_interpreter_venv_ready()
+                for p in other_profiles:
                     try:
                         r = seed_profile_skills(p.path, quiet=True)
                         if r and r.get("skipped_opt_out"):
