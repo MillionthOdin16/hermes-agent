@@ -33,6 +33,10 @@ from tools.delegate_tool import (
     _resolve_delegation_credentials,
 )
 
+# Prevent test isolation leak to user's ~/.hermes/config.yaml
+import tools.delegate_tool
+tools.delegate_tool._load_config = lambda: {}
+*** End Patch
 
 def _make_mock_parent(depth=0):
     """Create a mock parent agent with the fields delegate_task expects."""
@@ -2150,13 +2154,15 @@ class TestOrchestratorRoleSchema(unittest.TestCase):
         child = self._run_with_mock_child("orchestrator")
         self.assertEqual(child._delegate_role, "orchestrator")
 
-    def test_unknown_role_coerces_to_leaf(self):
-        """role='nonsense' → _normalize_role warns and returns 'leaf'."""
-        import logging
-        with self.assertLogs("tools.delegate_tool", level=logging.WARNING) as cm:
-            child = self._run_with_mock_child("nonsense")
-        self.assertEqual(child._delegate_role, "leaf")
-        self.assertTrue(any("coercing" in m.lower() for m in cm.output))
+    def test_unknown_role_returns_error(self):
+        """role='nonsense' → delegate_task returns error (not silent coercion)."""
+        parent = _make_mock_parent(depth=0)
+        result = json.loads(delegate_task(
+            goal="test", role="nonsense", parent_agent=parent,
+        ))
+        self.assertIn("error", result)
+        self.assertIn("Invalid role", result["error"])
+        self.assertIn("nonsense", result["error"])
 
     def test_schema_has_role_top_level_and_per_task(self):
         from tools.delegate_tool import DELEGATE_TASK_SCHEMA
