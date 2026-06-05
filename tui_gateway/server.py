@@ -8031,9 +8031,13 @@ def _(rid, params: dict) -> dict:
             )
     except ImportError:
         pass
+    import shlex
+
     try:
+        # SECURITY: Using shell=False and shlex.split to prevent command injection
+        # bypassing detect_dangerous_command.
         r = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30, cwd=os.getcwd()
+            shlex.split(cmd), capture_output=True, text=True, timeout=30, cwd=os.getcwd()
         )
         return _ok(
             rid,
