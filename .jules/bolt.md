@@ -1,0 +1,3 @@
+## 2026-10-09 - Redundant Regex Compilation in Critical Paths
+**Learning:** Python's `re.compile` cache handles up to 512 entries, but heavily-used code paths like text chunking (TTS) and message delivery loops (`gateway/run.py` processing `MEDIA` tags) that continuously call `re.compile` inline can create measurable processing overhead when the regex is recreated thousands of times. Even if cached, the function call + cache lookup takes longer than using a pre-compiled module-level object.
+**Action:** When a regular expression is needed in a fast inner loop or frequently-invoked function, compile it once at the module level rather than inside the function scope or loop.
