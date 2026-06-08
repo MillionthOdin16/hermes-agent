@@ -1,0 +1,3 @@
+## 2026-06-25 - Regex Compilation Overhead
+**Learning:** Compiling regular expressions using `re.compile()` inside functions (like `_markdown_to_signal` in `gateway/platforms/signal.py`) causes unnecessary overhead when the function is called repeatedly, as the regex is compiled on every invocation. Python's `re` module caches recently compiled regexes, but explicit pre-compilation at the module level is faster and avoids cache eviction issues.
+**Action:** Always move `re.compile()` calls to the module or class level to compile them only once during import/initialization, instead of inside functions or loops.
