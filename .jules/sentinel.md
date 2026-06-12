@@ -1,0 +1,4 @@
+## 2026-05-15 - [B324] Use of weak MD5/SHA1 hash for security compliance
+**Vulnerability:** Weak cryptographic functions (MD5 and SHA1) were used without `usedforsecurity=False`, which causes failures in FIPS-compliant environments and raises Bandit B324 security warnings.
+**Learning:** `hashlib.md5()` and `hashlib.sha1()` are still frequently used for non-cryptographic purposes like cache keys, deduplication hashing, or file chunking. When the `usedforsecurity=False` flag is omitted, security linters treat these calls as weak cryptographic primitives.
+**Prevention:** Whenever generating hashes for non-cryptographic purposes (e.g., caching, chunking, deduplication), explicitly append the `usedforsecurity=False` argument in `hashlib.md5()` or `hashlib.sha1()`. For actual cryptographic hashing (like password storage), use secure algorithms such as SHA-256 or bcrypt instead.
