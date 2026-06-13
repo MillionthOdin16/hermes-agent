@@ -323,6 +323,26 @@ def _redact_form_body(text: str) -> str:
     return _redact_query_string(text.strip())
 
 
+
+def _redact_env(m: re.Match) -> str:
+    name, quote, value = m.group(1), m.group(2), m.group(3)
+    return f"{name}={quote}{_mask_token(value)}{quote}"
+
+def _redact_json(m: re.Match) -> str:
+    key, value = m.group(1), m.group(2)
+    return f'{key}: "{_mask_token(value)}"'
+
+def _redact_telegram(m: re.Match) -> str:
+    prefix = m.group(1) or ""
+    digits = m.group(2)
+    return f"{prefix}{digits}:***"
+
+def _redact_phone(m: re.Match) -> str:
+    phone = m.group(1)
+    if len(phone) <= 8:
+        return phone[:2] + "****" + phone[-2:]
+    return phone[:4] + "****" + phone[-4:]
+
 def redact_sensitive_text(text: str, *, force: bool = False, code_file: bool = False) -> str:
     """Apply all redaction patterns to a block of text.
 
@@ -361,16 +381,10 @@ def redact_sensitive_text(text: str, *, force: bool = False, code_file: bool = F
     # ENV assignments: OPENAI_API_KEY=***  (skip for code files — false positives)
     if not code_file:
         if "=" in text:
-            def _redact_env(m):
-                name, quote, value = m.group(1), m.group(2), m.group(3)
-                return f"{name}={quote}{_mask_token(value)}{quote}"
             text = _ENV_ASSIGN_RE.sub(_redact_env, text)
 
         # JSON fields: "apiKey": "***"  (skip for code files — false positives)
         if ":" in text and '"' in text:
-            def _redact_json(m):
-                key, value = m.group(1), m.group(2)
-                return f'{key}: "{_mask_token(value)}"'
             text = _JSON_FIELD_RE.sub(_redact_json, text)
 
     # Authorization headers — _AUTH_HEADER_RE is "Authorization: Bearer ..."
@@ -384,10 +398,6 @@ def redact_sensitive_text(text: str, *, force: bool = False, code_file: bool = F
 
     # Telegram bot tokens — pattern requires ":<token>" with digits prefix
     if ":" in text:
-        def _redact_telegram(m):
-            prefix = m.group(1) or ""
-            digits = m.group(2)
-            return f"{prefix}{digits}:***"
         text = _TELEGRAM_RE.sub(_redact_telegram, text)
 
     # Private key blocks
@@ -417,11 +427,6 @@ def redact_sensitive_text(text: str, *, force: bool = False, code_file: bool = F
 
     # E.164 phone numbers (Signal, WhatsApp)
     if "+" in text:
-        def _redact_phone(m):
-            phone = m.group(1)
-            if len(phone) <= 8:
-                return phone[:2] + "****" + phone[-2:]
-            return phone[:4] + "****" + phone[-4:]
         text = _SIGNAL_PHONE_RE.sub(_redact_phone, text)
 
     return text
