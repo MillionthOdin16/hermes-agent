@@ -799,18 +799,18 @@ def _run_cua_driver_installer(label: str = "Installing", verbose: bool = True) -
     import shutil
     import subprocess
 
-    install_cmd = (
-        "/bin/bash -c \"$(curl -fsSL "
-        "https://raw.githubusercontent.com/trycua/cua/main/"
-        "libs/cua-driver/scripts/install.sh)\""
-    )
+    install_cmd = [
+        "/bin/bash",
+        "-c",
+        "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash",
+    ]
     if verbose:
         _print_info(f"    {label} cua-driver (macOS background computer-use)...")
     else:
         _print_info(f"    {label} cua-driver...")
     driver_cmd = _cua_driver_cmd()
     try:
-        result = subprocess.run(install_cmd, shell=True, timeout=300)
+        result = subprocess.run(install_cmd, shell=False, timeout=300)
         if result.returncode == 0 and shutil.which(driver_cmd):
             if verbose:
                 _print_success(f"    {driver_cmd} installed.")
