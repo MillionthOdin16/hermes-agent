@@ -667,7 +667,8 @@ class LocalEnvironment(BaseEnvironment):
                 # Wait on the process group, not just the shell wrapper. Under
                 # load the wrapper can exit before grandchildren do; returning
                 # at that point leaves orphaned process-group members behind.
-                if _wait_for_group_exit(pgid, 1.0):
+                # Under heavy xdist load, the SIGTERM -> exit chain can lag.
+                if _wait_for_group_exit(pgid, 5.0):
                     return
 
                 try:
@@ -675,7 +676,7 @@ class LocalEnvironment(BaseEnvironment):
                     os.killpg(pgid, signal.SIGKILL)  # windows-footgun: ok — POSIX process-group SIGKILL
                 except ProcessLookupError:
                     return
-                _wait_for_group_exit(pgid, 2.0)
+                _wait_for_group_exit(pgid, 5.0)
                 try:
                     proc.wait(timeout=0.2)
                 except (subprocess.TimeoutExpired, OSError):
