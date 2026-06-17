@@ -71,6 +71,30 @@ logger = logging.getLogger(__name__)
 INTERRUPT_WAITING_FOR_MODEL_PREFIX = "Operation interrupted: waiting for model response ("
 
 
+_GOAL_CONTINUATION_PREFIXES = (
+    "[Continuing toward your standing goal]\nGoal:",
+    "[system] [Continuing toward your standing goal]\nGoal:",
+)
+
+
+def _compact_goal_continuation_for_persistence(user_message: Any) -> Optional[str]:
+    """Return a compact transcript marker for synthetic goal continuations.
+
+    The full continuation prompt can include the entire goal, checklist, judge
+    feedback, and evidence instructions.  It must reach the model for the
+    current turn, but persisting it verbatim makes every future request replay
+    old scaffolding that no longer contains user intent.  Store a short marker
+    instead so long-running goals keep their working history without compounding
+    continuation boilerplate across turns.
+    """
+    if not isinstance(user_message, str):
+        return None
+    normalized = user_message.strip()
+    if not any(normalized.startswith(prefix) for prefix in _GOAL_CONTINUATION_PREFIXES):
+        return None
+    return "[system] [Continuing toward your standing goal]"
+
+
 def _image_error_max_dimension(error: Exception) -> Optional[int]:
     """Extract a provider-reported image dimension ceiling, if present."""
     parts = []

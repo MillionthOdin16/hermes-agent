@@ -6488,6 +6488,33 @@ class TestPersistUserMessageOverride:
         first_db_write = agent._session_db.append_message.call_args_list[0].kwargs
         assert first_db_write["content"] == "Hello there"
 
+    def test_goal_continuation_prompt_is_compacted_for_persistence(self, agent):
+        agent._cached_system_prompt = "You are helpful."
+        agent._use_prompt_caching = False
+        agent.compression_enabled = False
+        agent.save_trajectories = False
+        prompt = (
+            "[system] [Continuing toward your standing goal]\n"
+            "Goal: reduce token usage\n\n"
+            "Checklist progress (1/20 resolved):\n"
+            + "\n".join(f"[ ] item {i}: long details" for i in range(100))
+        )
+        agent.client.chat.completions.create.return_value = _mock_response(
+            content="continuing", finish_reason="stop"
+        )
+
+        with (
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation(prompt)
+
+        assert result["completed"] is True
+        sent_messages = agent.client.chat.completions.create.call_args.kwargs["messages"]
+        assert sent_messages[-1]["content"] == prompt
+        assert result["messages"][0]["content"] == "[system] [Continuing toward your standing goal]"
+        assert "Checklist progress" not in result["messages"][0]["content"]
+
 
 class TestReasoningReplayForStrictProviders:
     """Assistant replay must preserve provider-native reasoning fields."""
