@@ -120,7 +120,7 @@ class GatewaySlashCommandsMixin:
         if retained_model_override is not None:
             self._session_model_overrides[session_key] = retained_model_override
         else:
-            self._session_model_overrides.pop(session_key, None)
+        self._session_model_overrides.pop(session_key, None)
         self._set_session_reasoning_override(session_key, None)
         if hasattr(self, "_pending_model_notes"):
             self._pending_model_notes.pop(session_key, None)
