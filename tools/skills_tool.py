@@ -752,7 +752,7 @@ def skills_list(category: str = None, task_id: str = None) -> str:
                 _set_cached_skills_list(all_skills)
         else:
             # Category filter — always scan fresh (category changes cache key)
-        all_skills = _find_all_skills()
+            all_skills = _find_all_skills()
 
         if not all_skills:
             return json.dumps(
