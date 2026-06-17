@@ -4020,7 +4020,7 @@ def run_conversation(
                         logger.info(
                             "Deduplicated %d repeated tool result(s) before next request",
                             _deduped_tool_results,
-                        )
+                    )
                 _real_tokens = estimate_request_tokens_rough(
                     messages,
                     system_prompt=active_system_prompt or "",
