@@ -894,7 +894,7 @@ def web_search_tool(query: str, limit: int = 5) -> str:
 async def web_extract_tool(
     urls: List[str],
     format: str = None,
-    use_llm_processing: bool = True,
+    use_llm_processing: bool = False,
     model: Optional[str] = None,
     min_length: int = DEFAULT_MIN_LENGTH_FOR_SUMMARIZATION
 ) -> str:
