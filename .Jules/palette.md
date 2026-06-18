@@ -1,0 +1,3 @@
+## 2026-02-13 - Nested Interactive Elements Need Accessibility
+**Learning:** Even when an icon-only interactive element (like `<Button>`) is nested inside a wrapper link (`<a>` tag) that already provides a `title` or `aria-label`, the innermost interactive element still needs its own `aria-label` attribute. Screen readers may focus on the inner button and announce it without context if it lacks an accessible name.
+**Action:** Always verify that every interactive element, especially icon-only buttons, has an explicit `aria-label`, regardless of whether it's wrapped in an accessible parent container.
