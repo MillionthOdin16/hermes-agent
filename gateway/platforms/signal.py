@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -63,6 +64,17 @@ SSE_RETRY_DELAY_INITIAL = 2.0
 SSE_RETRY_DELAY_MAX = 60.0
 HEALTH_CHECK_INTERVAL = 30.0  # seconds between health checks
 HEALTH_CHECK_STALE_THRESHOLD = 120.0  # seconds without SSE activity before concern
+
+_SIGNAL_CB_RE = re.compile(r"```[a-zA-Z0-9_+-]*\n?(.*?)```", re.DOTALL)
+_SIGNAL_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_SIGNAL_INLINE_PATTERNS = [
+    (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), "BOLD"),
+    (re.compile(r"__(.+?)__", re.DOTALL), "BOLD"),
+    (re.compile(r"~~(.+?)~~", re.DOTALL), "STRIKETHROUGH"),
+    (re.compile(r"`(.+?)`"), "MONOSPACE"),
+    (re.compile(r"(?<!\*)\*(?!\*| )(.+?)(?<!\*)\*(?!\*)"), "ITALIC"),
+    (re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)"), "ITALIC"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -829,8 +841,6 @@ class SignalAdapter(BasePlatformAdapter):
         Returns ``(plain_text, styles_list)`` where *styles_list* may be
         empty if there's nothing to format.
         """
-        import re
-
         def _utf16_len(s: str) -> int:
             """Length of *s* in UTF-16 code units."""
             return len(s.encode("utf-16-le")) // 2
@@ -843,18 +853,16 @@ class SignalAdapter(BasePlatformAdapter):
         styles: list = []
 
         # --- Phase 1: fenced code blocks  ```...``` → MONOSPACE ---
-        _CB = re.compile(r"```[a-zA-Z0-9_+-]*\n?(.*?)```", re.DOTALL)
-        while m := _CB.search(text):
+        while m := _SIGNAL_CB_RE.search(text):
             inner = m.group(1).rstrip("\n")
             start = m.start()
             text = text[: m.start()] + inner + text[m.end() :]
             styles.append((start, len(inner), "MONOSPACE"))
 
         # --- Phase 2: heading markers  # Foo → Foo (BOLD) ---
-        _HEADING = re.compile(r"^#{1,6}\s+", re.MULTILINE)
         new_text = ""
         last_end = 0
-        for m in _HEADING.finditer(text):
+        for m in _SIGNAL_HEADING_RE.finditer(text):
             new_text += text[last_end : m.start()]
             last_end = m.end()
             eol = text.find("\n", m.end())
@@ -875,19 +883,10 @@ class SignalAdapter(BasePlatformAdapter):
         #
         # Fix: collect ALL non-overlapping matches first, then strip every
         # marker in one pass so positions are computed against the final text.
-        _PATTERNS = [
-            (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), "BOLD"),
-            (re.compile(r"__(.+?)__", re.DOTALL), "BOLD"),
-            (re.compile(r"~~(.+?)~~", re.DOTALL), "STRIKETHROUGH"),
-            (re.compile(r"`(.+?)`"), "MONOSPACE"),
-            (re.compile(r"(?<!\*)\*(?!\*| )(.+?)(?<!\*)\*(?!\*)"), "ITALIC"),
-            (re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)"), "ITALIC"),
-        ]
-
         # Collect all non-overlapping matches (earlier patterns win ties).
         all_matches: list = []  # (start, end, g1_start, g1_end, style)
         occupied: list = []     # (start, end) intervals already claimed
-        for pat, style in _PATTERNS:
+        for pat, style in _SIGNAL_INLINE_PATTERNS:
             for m in pat.finditer(text):
                 ms, me = m.start(), m.end()
                 if not any(ms < oe and me > os for os, oe in occupied):
