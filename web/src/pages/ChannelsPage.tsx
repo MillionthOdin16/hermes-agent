@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   AlertTriangle,
   Check,
@@ -38,7 +44,10 @@ import { cn, themedBody } from "@/lib/utils";
 // whatever the live gateway runtime reports (connected/disconnected/fatal).
 const STATE_BADGE: Record<
   string,
-  { tone: "success" | "warning" | "destructive" | "secondary" | "outline"; label: string }
+  {
+    tone: "success" | "warning" | "destructive" | "secondary" | "outline";
+    label: string;
+  }
 > = {
   connected: { tone: "success", label: "Connected" },
   pending_restart: { tone: "warning", label: "Restart to apply" },
@@ -80,7 +89,10 @@ export default function ChannelsPage() {
   const [draftEnv, setDraftEnv] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const closeEdit = useCallback(() => setEditing(null), []);
-  const editModalRef = useModalBehavior({ open: editing !== null, onClose: closeEdit });
+  const editModalRef = useModalBehavior({
+    open: editing !== null,
+    onClose: closeEdit,
+  });
 
   // Per-card busy + restart-needed tracking
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -152,7 +164,11 @@ export default function ChannelsPage() {
       setPlatforms((prev) =>
         prev.map((p) =>
           p.id === platform.id
-            ? { ...p, enabled: next, state: next ? "pending_restart" : "disabled" }
+            ? {
+                ...p,
+                enabled: next,
+                state: next ? "pending_restart" : "disabled",
+              }
             : p,
         ),
       );
@@ -168,7 +184,10 @@ export default function ChannelsPage() {
     setTestingId(platform.id);
     try {
       const res = await api.testMessagingPlatform(platform.id);
-      showToast(`${platform.name}: ${res.message}`, res.ok ? "success" : "error");
+      showToast(
+        `${platform.name}: ${res.message}`,
+        res.ok ? "success" : "error",
+      );
     } catch (e) {
       showToast(`Error: ${e}`, "error");
     } finally {
@@ -239,7 +258,9 @@ export default function ChannelsPage() {
               className="uppercase shrink-0"
               onClick={handleRestart}
               disabled={restarting}
-              prefix={restarting ? <Spinner /> : <RotateCw className="h-4 w-4" />}
+              prefix={
+                restarting ? <Spinner /> : <RotateCw className="h-4 w-4" />
+              }
             >
               {restarting ? "Restarting…" : "Restart now"}
             </Button>
@@ -252,9 +273,10 @@ export default function ChannelsPage() {
           <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
             <WifiOff className="h-4 w-4 shrink-0" />
             <span>
-              The gateway is not running. Configure channels here, then start the
-              gateway with <code className="font-courier">hermes gateway start</code>{" "}
-              (or the Restart button above).
+              The gateway is not running. Configure channels here, then start
+              the gateway with{" "}
+              <code className="font-courier">hermes gateway start</code> (or the
+              Restart button above).
             </span>
           </CardContent>
         </Card>
@@ -331,12 +353,16 @@ export default function ChannelsPage() {
                     type={field.is_password ? "password" : "text"}
                     placeholder={
                       field.is_set
-                        ? field.redacted_value || "•••••• (set — leave blank to keep)"
+                        ? field.redacted_value ||
+                          "•••••• (set — leave blank to keep)"
                         : field.key
                     }
                     value={draftEnv[field.key] ?? ""}
                     onChange={(e) =>
-                      setDraftEnv((prev) => ({ ...prev, [field.key]: e.target.value }))
+                      setDraftEnv((prev) => ({
+                        ...prev,
+                        [field.key]: e.target.value,
+                      }))
                     }
                   />
                 </div>
@@ -515,13 +541,14 @@ function TelegramOnboardingPanel({
         if (cancelled) return;
 
         const expiresAt = Date.parse(setup.expires_at);
-        const expired =
-          Number.isFinite(expiresAt) && Date.now() >= expiresAt;
+        const expired = Number.isFinite(expiresAt) && Date.now() >= expiresAt;
         if (isTerminalTelegramOnboardingError(pollError) || expired) {
           setSetup(null);
           setQrDataUrl("");
           setPhase("idle");
-          setError("Telegram pairing expired. Start a new QR setup to try again.");
+          setError(
+            "Telegram pairing expired. Start a new QR setup to try again.",
+          );
           return;
         }
 
@@ -562,7 +589,9 @@ function TelegramOnboardingPanel({
     setDetectedOwnerId(null);
     setNewAllowedId("");
     try {
-      const res = await api.startTelegramOnboarding({ bot_name: "Hermes Agent" });
+      const res = await api.startTelegramOnboarding({
+        bot_name: "Hermes Agent",
+      });
       const dataUrl = await QRCode.toDataURL(res.qr_payload, {
         errorCorrectionLevel: "M",
         margin: 1,
@@ -651,7 +680,10 @@ function TelegramOnboardingPanel({
           setTimeout(() => void onChanged(), 4000);
         } catch (restartError) {
           onRestartNeeded();
-          showToast(`Telegram saved; gateway restart failed: ${restartError}`, "error");
+          showToast(
+            `Telegram saved; gateway restart failed: ${restartError}`,
+            "error",
+          );
         }
       } else {
         onRestartNeeded();
@@ -679,8 +711,12 @@ function TelegramOnboardingPanel({
           size="sm"
           className="uppercase"
           onClick={() => void start()}
-          disabled={phase === "starting" || phase === "waiting" || phase === "applying"}
-          prefix={phase === "starting" ? <Spinner /> : <QrCode className="h-4 w-4" />}
+          disabled={
+            phase === "starting" || phase === "waiting" || phase === "applying"
+          }
+          prefix={
+            phase === "starting" ? <Spinner /> : <QrCode className="h-4 w-4" />
+          }
         >
           {phase === "starting" ? "Starting…" : "Set up with QR"}
         </Button>
@@ -716,15 +752,17 @@ function TelegramOnboardingPanel({
                     <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
                       Allowed users
                     </span>
-                    {detectedOwnerId && allowedIds.includes(detectedOwnerId) && (
-                      <Badge tone="success">owner detected</Badge>
-                    )}
+                    {detectedOwnerId &&
+                      allowedIds.includes(detectedOwnerId) && (
+                        <Badge tone="success">owner detected</Badge>
+                      )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {allowedIds.map((id) => (
                       <button
                         key={id}
                         type="button"
+                        aria-label={`Remove allowed user ID ${id}`}
                         className="inline-flex items-center gap-1 border border-border px-2 py-1 font-courier text-xs text-foreground hover:border-destructive/50"
                         onClick={() =>
                           setAllowedIds((ids) =>
@@ -751,7 +789,12 @@ function TelegramOnboardingPanel({
                     placeholder="Telegram user ID"
                     className="font-courier"
                   />
-                  <Button size="sm" outlined onClick={addAllowedId} prefix={<Check />}>
+                  <Button
+                    size="sm"
+                    outlined
+                    onClick={addAllowedId}
+                    prefix={<Check />}
+                  >
                     Add
                   </Button>
                 </div>
@@ -762,7 +805,13 @@ function TelegramOnboardingPanel({
                     className="uppercase"
                     onClick={() => void apply()}
                     disabled={phase === "applying"}
-                    prefix={phase === "applying" ? <Spinner /> : <Save className="h-4 w-4" />}
+                    prefix={
+                      phase === "applying" ? (
+                        <Spinner />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )
+                    }
                   >
                     {phase === "applying" ? "Saving…" : "Save and restart"}
                   </Button>
