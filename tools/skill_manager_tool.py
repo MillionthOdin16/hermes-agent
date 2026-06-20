@@ -353,12 +353,26 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     """
     Find a skill by name across all skill directories.
 
-    Searches the local skills dir (~/.hermes/skills/) first, then any
-    external dirs configured via skills.external_dirs.  Returns
-    {"path": Path} or None.
+    Searches using frontmatter name index (authoritative) first, then
+    falls back to directory-name matching for skills with empty frontmatter.
+    This mirrors skill_view's resolution logic so collision detection is
+    consistent with skill loading.
     """
     from agent.skill_utils import get_all_skills_dirs, is_excluded_skill_path
-    for skills_dir in get_all_skills_dirs():
+    from tools.skills_tool import _build_frontmatter_index
+
+    all_dirs = get_all_skills_dirs()
+
+    # Try frontmatter name index first (authoritative for named skills)
+    fm_index = _build_frontmatter_index(all_dirs)
+    fm_candidates = fm_index.get(name, [])
+    if fm_candidates:
+        # Return first match — this is collision detection, not semantic disambiguation
+        sd, smd, fm = fm_candidates[0]
+        return {"path": smd.parent}
+
+    # Fall back to directory-name matching (handles empty fm name skills)
+    for skills_dir in all_dirs:
         if not skills_dir.exists():
             continue
         for skill_md in skills_dir.rglob("SKILL.md"):
@@ -366,6 +380,7 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
                 continue
             if skill_md.parent.name == name:
                 return {"path": skill_md.parent}
+
     return None
 
 
