@@ -5,6 +5,8 @@ MAX_SKILL_CONTENT_CHARS (100k) and MAX_SKILL_FILE_BYTES (1 MiB).
 Hand-placed and hub-installed skills may be stored larger than that, but
 skill_view returns bounded excerpts so oversized skills do not inflate every
 future model request.
+"""
+
     def test_oversized_handplaced_skill_view_is_bounded(self, isolate_skills, tmp_path):
         """A hand-placed 200k skill returns a bounded head/tail excerpt."""
         from tools.skills_tool import skill_view
