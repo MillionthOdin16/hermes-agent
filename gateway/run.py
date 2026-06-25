@@ -9351,7 +9351,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # real token counts.  Having hygiene at 0.50 caused premature
             # compression on every turn in long gateway sessions.
             _hyg_model = "anthropic/claude-sonnet-4.6"
-            _hyg_threshold_pct = 0.85
+            _hyg_threshold_pct = 0.98  # Emergency backup only; run above context-engine/LCM thresholds.
             _hyg_compression_enabled = True
             _hyg_hard_msg_limit = 5000
             _hyg_config_context_length = None
