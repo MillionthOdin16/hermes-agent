@@ -3380,6 +3380,7 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        threshold_tokens_cap: int = 0,
         max_tokens: int | None = None,
         model_thresholds: dict[str, float] | None = None,
         threshold_tokens_cap: Any = None,
