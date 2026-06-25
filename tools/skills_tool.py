@@ -86,6 +86,11 @@ from agent.skill_utils import (
 
 logger = logging.getLogger(__name__)
 
+# Frontmatter name index cache: Dict[scan_dir, Dict[fm_name, [(skill_dir, skill_md, fm_dict), ...]]]
+# Built lazily by _build_frontmatter_index(), invalidated on skill changes.
+_frontmatter_name_index: Dict[Path, Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]]] = {}
+_fm_index_built: set = set()
+
 
 # All skills live in ~/.hermes/skills/ (seeded from bundled skills/ on install).
 # This is the single source of truth -- agent edits, hub installs, and bundled
@@ -597,6 +602,57 @@ def _is_skill_disabled(name: str, platform: str = None) -> bool:
         return name in global_disabled
     except Exception:
         return False
+
+
+def _build_frontmatter_index(scan_dirs: List[Path]) -> Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]]:
+    """
+    Build a frontmatter name index across all scan_dirs.
+
+    Returns Dict[fm_name, [(skill_dir, skill_md, fm_dict), ...]].
+    Each frontmatter name maps to ALL matching skills (collision preserved).
+    Local ~/.hermes/skills/ is indexed first; external dirs append for collisions.
+    Uses a per-scan_dir cache so repeated lookups don't re-scan the filesystem.
+    """
+    from agent.skill_utils import iter_skill_index_files
+
+    full_index: Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]] = {}
+    for scan_dir in scan_dirs:
+        if scan_dir in _fm_index_built and scan_dir in _frontmatter_name_index:
+            for fm_name, entries in _frontmatter_name_index[scan_dir].items():
+                if fm_name not in full_index:
+                    full_index[fm_name] = list(entries)
+                else:
+                    full_index[fm_name].extend(list(entries))
+            continue
+
+        dir_index: Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]] = {}
+        for smd in iter_skill_index_files(scan_dir, "SKILL.md"):
+            try:
+                fm_content = smd.read_text(encoding="utf-8")[:512]
+                fm, _ = _parse_frontmatter(fm_content)
+                fm_name = fm.get("name", "")
+                if not fm_name:
+                    continue
+                entry = (smd.parent, smd, fm)
+                if fm_name not in dir_index:
+                    dir_index[fm_name] = []
+                dir_index[fm_name].append(entry)
+            except Exception:
+                continue
+        _frontmatter_name_index[scan_dir] = dir_index
+        _fm_index_built.add(scan_dir)
+        for fm_name, entries in dir_index.items():
+            if fm_name not in full_index:
+                full_index[fm_name] = list(entries)
+            else:
+                full_index[fm_name].extend(list(entries))
+    return full_index
+
+
+def _invalidate_frontmatter_index() -> None:
+    """Clear the frontmatter index cache. Call after skill creation/deletion."""
+    _frontmatter_name_index.clear()
+    _fm_index_built.clear()
 
 
 def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
