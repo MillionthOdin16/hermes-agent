@@ -1399,6 +1399,7 @@ def init_agent(
     compression_enabled = str(_compression_cfg.get("enabled", True)).lower() in {"true", "1", "yes"}
     compression_target_ratio = float(_compression_cfg.get("target_ratio", 0.20))
     compression_protect_last = int(_compression_cfg.get("protect_last_n", 20))
+    compression_threshold_tokens_cap = int(_compression_cfg.get("threshold_tokens_cap", 0))
     # protect_first_n is the number of non-system messages to protect at
     # the head, in addition to the system prompt (which is always
     # implicitly protected by the compressor).  Floor at 0 — a value of
@@ -1658,6 +1659,7 @@ def init_agent(
             api_mode=agent.api_mode,
             abort_on_summary_failure=compression_abort_on_summary_failure,
             max_tokens=agent.max_tokens,
+            threshold_tokens_cap=compression_threshold_tokens_cap,
         )
     agent.compression_enabled = compression_enabled
     agent.compression_in_place = compression_in_place
