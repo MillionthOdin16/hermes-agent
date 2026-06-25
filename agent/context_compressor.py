@@ -984,6 +984,44 @@ class ContextCompressor(ContextEngine):
     # Tool output pruning (cheap pre-pass, no LLM call)
     # ------------------------------------------------------------------
 
+    DUPLICATE_TOOL_OUTPUT_PLACEHOLDER = "[Duplicate tool output — same content as a more recent call]"
+
+    def dedupe_duplicate_tool_results(
+        self,
+        messages: List[Dict[str, Any]],
+        min_chars: int = 200,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Replace older exact-duplicate text tool results with a back-reference.
+
+        Keeps the newest full copy so the model can still inspect the output
+        without paying for repeated identical payloads on every later request.
+        """
+        if not messages:
+            return messages, 0
+
+        result = [m.copy() for m in messages]
+        content_hashes: dict[str, tuple[int, str]] = {}
+        pruned = 0
+        for i in range(len(result) - 1, -1, -1):
+            msg = result[i]
+            if msg.get("role") != "tool":
+                continue
+            content = msg.get("content") or ""
+            if not isinstance(content, str):
+                continue
+            if len(content) < min_chars:
+                continue
+            if content.startswith("[Duplicate tool output"):
+                continue
+            h = hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:12]
+            if h in content_hashes:
+                result[i] = {**msg, "content": self.DUPLICATE_TOOL_OUTPUT_PLACEHOLDER}
+                pruned += 1
+            else:
+                content_hashes[h] = (i, msg.get("tool_call_id", "?"))
+
+        return (result, pruned) if pruned else (messages, 0)
+
     def _prune_old_tool_results(
         self, messages: List[Dict[str, Any]], protect_tail_count: int,
         protect_tail_tokens: int | None = None,
@@ -1056,31 +1094,9 @@ class ContextCompressor(ContextEngine):
         else:
             prune_boundary = len(result) - protect_tail_count
 
-        # Pass 1: Deduplicate identical tool results.
-        # When the same file is read multiple times, keep only the most recent
-        # full copy and replace older duplicates with a back-reference.
-        content_hashes: dict = {}  # hash -> (index, tool_call_id)
-        for i in range(len(result) - 1, -1, -1):
-            msg = result[i]
-            if msg.get("role") != "tool":
-                continue
-            content = msg.get("content") or ""
-            # Multimodal content — dedupe by the text summary if available.
-            if isinstance(content, list):
-                continue
-            if not isinstance(content, str):
-                # Multimodal dict envelopes ({_multimodal: True, content: [...]}) and
-                # other non-string tool-result shapes can't be hashed/deduped by text.
-                continue
-            if len(content) < 200:
-                continue
-            h = hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:12]
-            if h in content_hashes:
-                # This is an older duplicate — replace with back-reference
-                result[i] = {**msg, "content": "[Duplicate tool output — same content as a more recent call]"}
-                pruned += 1
-            else:
-                content_hashes[h] = (i, msg.get("tool_call_id", "?"))
+        # Pass 1: Deduplicate identical tool results (via shared method).
+        result, deduped_count = self.dedupe_duplicate_tool_results(result)
+        pruned += deduped_count
 
         # Pass 2: Replace old tool results with informative summaries
         for i in range(prune_boundary):
