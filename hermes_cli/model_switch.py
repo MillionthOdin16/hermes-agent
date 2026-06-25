@@ -609,7 +609,7 @@ def _resolve_alias_fallback(
     Falls back to ``("openrouter", "nous")`` only when no authenticated
     providers are supplied (backwards compat for non-interactive callers).
     """
-    providers = authenticated_providers or ("openrouter", "nous")
+    providers = authenticated_providers or ()
     for provider in providers:
         result = resolve_alias(raw_input, provider)
         if result is not None:
