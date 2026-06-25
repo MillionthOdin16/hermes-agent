@@ -603,6 +603,38 @@ def migrate_goal_to_session(old_session_id: str, new_session_id: str, *, reason:
         logger.debug("GoalManager: goal migration failed: %s", exc)
         return False
 
+def migrate_goal_session(
+    old_session_id: str,
+    new_session_id: str,
+    *,
+    reason: str = "session_rollover",
+) -> bool:
+    """Move an active goal when compression rolls a session id.
+
+    Goals are keyed by session id. Context compression creates a child session
+    id for the compacted transcript, so an active/paused goal must follow that
+    child or the next gateway turn will think the goal disappeared.
+    """
+    if not old_session_id or not new_session_id or old_session_id == new_session_id:
+        return False
+
+    old_state = load_goal(old_session_id)
+    if old_state is None or old_state.status not in {"active", "paused"}:
+        return False
+
+    existing = load_goal(new_session_id)
+    if existing is not None and existing.status in {"active", "paused"}:
+        return False
+
+    migrated = GoalState.from_json(old_state.to_json())
+    save_goal(new_session_id, migrated)
+
+    archived = GoalState.from_json(old_state.to_json())
+    archived.status = "cleared"
+    archived.paused_reason = f"migrated to {new_session_id} ({reason})"
+    save_goal(old_session_id, archived)
+    return True
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Judge
