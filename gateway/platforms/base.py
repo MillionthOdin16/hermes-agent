@@ -4333,33 +4333,38 @@ class BasePlatformAdapter(ABC):
                         )
                     return
 
-                # Other bypass commands (/approve, /deny, /status,
-                # /background, /restart) just need direct dispatch — they
-                # don't cancel the running task.
-                logger.debug(
-                    "[%s] Command '/%s' bypassing active-session guard for %s",
-                    self.name, cmd, session_key,
-                )
-                try:
-                    _thread_meta = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event))
-                    response = await self._message_handler(event)
-                    _text, _eph_ttl = self._unwrap_ephemeral(response)
-                    if _text:
-                        _r = await self._send_with_retry(
-                            chat_id=event.source.chat_id,
-                            content=_text,
-                            reply_to=_reply_anchor_for_event(event),
-                            metadata=_mark_notify_metadata(_thread_meta),
-                        )
-                        if _eph_ttl > 0 and _r.success and _r.message_id:
-                            self._schedule_ephemeral_delete(
+                # Telegram may split long command messages near its message
+                # boundary. Let long commands flow through normal text
+                # batching so all chunks can be assembled before dispatch.
+                _TEXT_BATCH_BYPASS_THRESHOLD = 3500
+                if len(event.text or "") < _TEXT_BATCH_BYPASS_THRESHOLD:
+                    # Other bypass commands (/approve, /deny, /status,
+                    # /background, /restart) just need direct dispatch — they
+                    # don't cancel the running task.
+                    logger.debug(
+                        "[%s] Command '/%s' bypassing active-session guard for %s",
+                        self.name, cmd, session_key,
+                    )
+                    try:
+                        _thread_meta = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event))
+                        response = await self._message_handler(event)
+                        _text, _eph_ttl = self._unwrap_ephemeral(response)
+                        if _text:
+                            _r = await self._send_with_retry(
                                 chat_id=event.source.chat_id,
-                                message_id=_r.message_id,
-                                ttl_seconds=_eph_ttl,
+                                content=_text,
+                                reply_to=_reply_anchor_for_event(event),
+                                metadata=_thread_meta,
                             )
-                except Exception as e:
-                    logger.error("[%s] Command '/%s' dispatch failed: %s", self.name, cmd, e, exc_info=True)
-                return
+                            if _eph_ttl > 0 and _r.success and _r.message_id:
+                                self._schedule_ephemeral_delete(
+                                    chat_id=event.source.chat_id,
+                                    message_id=_r.message_id,
+                                    ttl_seconds=_eph_ttl,
+                                )
+                    except Exception as e:
+                        logger.error("[%s] Command '/%s' dispatch failed: %s", self.name, cmd, e, exc_info=True)
+                    return
 
             # Clarify text-capture bypass: if the agent is blocked on a
             # clarify_tool call awaiting a free-form text response (open-
