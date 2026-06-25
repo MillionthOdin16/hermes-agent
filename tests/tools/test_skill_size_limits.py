@@ -4,62 +4,7 @@ Agent writes (create/edit/patch/write_file) are constrained to
 MAX_SKILL_CONTENT_CHARS (100k) and MAX_SKILL_FILE_BYTES (1 MiB).
 Hand-placed and hub-installed skills may be stored larger than that, but
 skill_view returns bounded excerpts so oversized skills do not inflate every
-future model request.
-    def test_oversized_handplaced_skill_view_is_bounded(self, isolate_skills, tmp_path):
-        """A hand-placed 200k skill returns a bounded head/tail excerpt."""
-        from tools.skills_tool import skill_view
-
-        skill_dir = tmp_path / "skills" / "manual-giant"
-        skill_dir.mkdir(parents=True)
-        huge = _make_skill_content(200_000) + "\nEND-MARKER\n"
-        huge = huge.replace("name: test-skill", "name: manual-giant")
-        (skill_dir / "SKILL.md").write_text(huge, encoding="utf-8")
-
-        result = json.loads(skill_view("manual-giant"))
-        assert "content" in result
-        assert result["content_truncated"] is True
-        assert result["content_original_chars"] == len(huge)
-        assert result["content_returned_chars"] < MAX_SKILL_CONTENT_CHARS
-        assert "name: manual-giant" in result["content"]
-        assert "END-MARKER" in result["content"]
-        assert "middle of skill manual-giant truncated" in result["content"]
-
-    def test_oversized_handplaced_skill_full_content_env_override(
-        self, isolate_skills, tmp_path, monkeypatch
-    ):
-        from tools.skills_tool import skill_view
-
-        skill_dir = tmp_path / "skills" / "manual-full"
-        skill_dir.mkdir(parents=True)
-        huge = _make_skill_content(120_000)
-        huge = huge.replace("name: test-skill", "name: manual-full")
-        (skill_dir / "SKILL.md").write_text(huge, encoding="utf-8")
-        monkeypatch.setenv("HERMES_SKILL_VIEW_FULL_CONTENT", "1")
-
-        result = json.loads(skill_view("manual-full"))
-
-        assert result["content_truncated"] is False
-        assert len(result["content"]) == len(huge)
-
-    def test_oversized_linked_file_view_is_bounded(self, isolate_skills, tmp_path):
-        from tools.skills_tool import skill_view
-
-        skill_dir = tmp_path / "skills" / "manual-file"
-        ref_dir = skill_dir / "references"
-        ref_dir.mkdir(parents=True)
-        skill = _make_skill_content(1000).replace("name: test-skill", "name: manual-file")
-        (skill_dir / "SKILL.md").write_text(skill, encoding="utf-8")
-        large_ref = "REF-START\n" + ("details\n" * 20_000) + "REF-END\n"
-        (ref_dir / "huge.md").write_text(large_ref, encoding="utf-8")
-
-        result = json.loads(skill_view("manual-file", file_path="references/huge.md"))
-
-        assert result["content_truncated"] is True
-        assert result["content_original_chars"] == len(large_ref)
-        assert "REF-START" in result["content"]
-        assert "REF-END" in result["content"]
-        assert "middle of skill file references/huge.md truncated" in result["content"]
-"""
+future model request."""
 
 import json
 
