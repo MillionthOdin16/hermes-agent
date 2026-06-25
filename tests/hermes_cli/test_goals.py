@@ -37,6 +37,27 @@ def hermes_home(tmp_path, monkeypatch):
 # ──────────────────────────────────────────────────────────────────────
 
 
+def test_migrate_goal_session_copies_active_goal_and_archives_old_key(hermes_home):
+    from hermes_cli.goals import GoalManager, load_goal, migrate_goal_session
+
+    GoalManager("pre-compression-session").set("keep working through compression")
+
+    assert migrate_goal_session(
+        "pre-compression-session",
+        "compressed-child-session",
+        reason="test-compression",
+    )
+
+    migrated = load_goal("compressed-child-session")
+    archived = load_goal("pre-compression-session")
+    assert migrated is not None
+    assert migrated.status == "active"
+    assert migrated.goal == "keep working through compression"
+    assert archived is not None
+    assert archived.status == "cleared"
+    assert archived.paused_reason == "migrated to compressed-child-session (test-compression)"
+
+
 class TestParseJudgeResponse:
     def test_clean_json_done(self):
         from hermes_cli.goals import _parse_judge_response

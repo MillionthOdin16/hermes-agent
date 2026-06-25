@@ -305,7 +305,7 @@ def _web_requires_env() -> list[str]:
 # unit-test patches.
 
 
-DEFAULT_MIN_LENGTH_FOR_SUMMARIZATION = 5000
+DEFAULT_MIN_LENGTH_FOR_SUMMARIZATION = 100_000
 
 def _is_nous_auxiliary_client(client: Any) -> bool:
     """Return True when the resolved auxiliary backend is Nous Portal."""
@@ -370,7 +370,7 @@ async def process_content_with_llm(
     MAX_CONTENT_SIZE = 2_000_000  # 2M chars - refuse entirely above this
     CHUNK_THRESHOLD = 500_000     # 500k chars - use chunked processing above this
     CHUNK_SIZE = 100_000          # 100k chars per chunk
-    MAX_OUTPUT_SIZE = 5000        # Hard cap on final output size
+    MAX_OUTPUT_SIZE = 50_000      # Hard cap on final output size
     
     try:
         content_len = len(content)
@@ -894,7 +894,7 @@ def web_search_tool(query: str, limit: int = 5) -> str:
 async def web_extract_tool(
     urls: List[str],
     format: str = None,
-    use_llm_processing: bool = True,
+    use_llm_processing: bool = False,
     model: Optional[str] = None,
     min_length: int = DEFAULT_MIN_LENGTH_FOR_SUMMARIZATION
 ) -> str:
@@ -1338,7 +1338,7 @@ WEB_SEARCH_SCHEMA = {
 
 WEB_EXTRACT_SCHEMA = {
     "name": "web_extract",
-    "description": "Extract content from web page URLs. Returns page content in markdown format. Also works with PDF URLs (arxiv papers, documents, etc.) — pass the PDF link directly and it converts to markdown text. Pages under 5000 chars return full markdown; larger pages are LLM-summarized and capped at ~5000 chars per page. Pages over 2M chars are refused. If a URL fails or times out, use the browser tool to access it instead.",
+    "description": "Extract raw markdown content from web page URLs, including PDFs. Raw extraction is the default. Large tool results are persisted automatically when needed; web search results over 250K chars are saved to disk. Callers may explicitly request LLM processing in code paths that expose that option. If a URL fails or times out, use the browser tool instead.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -1361,7 +1361,7 @@ registry.register(
     check_fn=check_web_api_key,
     requires_env=_web_requires_env(),
     emoji="🔍",
-    max_result_size_chars=100_000,
+    max_result_size_chars=250_000,
 )
 registry.register(
     name="web_extract",
