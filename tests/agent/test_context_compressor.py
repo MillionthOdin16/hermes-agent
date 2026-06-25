@@ -2296,6 +2296,22 @@ class TestTokenBudgetTailProtection:
         # At least one old tool result should have been pruned
         assert pruned >= 1
 
+    def test_dedupe_duplicate_tool_results_keeps_newest_full_copy(self, budget_compressor):
+        """Exact repeated tool outputs should keep only the newest full payload."""
+        c = budget_compressor
+        duplicate = "same large output\n" + "x" * 5000
+        messages = [
+            {"role": "tool", "content": duplicate, "tool_call_id": "old"},
+            {"role": "assistant", "content": "middle"},
+            {"role": "tool", "content": duplicate, "tool_call_id": "new"},
+        ]
+
+        result, pruned = c.dedupe_duplicate_tool_results(messages)
+
+        assert pruned == 1
+        assert result[0]["content"].startswith("[Duplicate tool output")
+        assert result[2]["content"] == duplicate
+
     def test_prune_short_conv_protects_entire_tail(self, budget_compressor):
         """Regression guard for PR #17025.
 
