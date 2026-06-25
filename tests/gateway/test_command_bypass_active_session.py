@@ -13,6 +13,7 @@ the safety net in _run_agent discards leaked command text.
 """
 
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -493,3 +494,51 @@ class TestBypassWithBotnameSuffix:
 
         assert sk not in adapter._pending_messages
         assert any("handled:new" in r for r in adapter.sent_responses)
+
+
+class TestBypassThreshold:
+    """Long commands should not bypass before Telegram batch assembly."""
+
+    @pytest.mark.asyncio
+    async def test_short_queue_bypasses(self):
+        adapter = _make_adapter()
+        sk = _session_key()
+        adapter._active_sessions[sk] = asyncio.Event()
+
+        await adapter.handle_message(_make_event("/queue summarize logs"))
+
+        assert sk not in adapter._pending_messages
+        assert any("handled:queue" in r for r in adapter.sent_responses)
+
+    @pytest.mark.asyncio
+    async def test_long_queue_does_not_bypass(self):
+        adapter = _make_adapter()
+        sk = _session_key()
+        adapter._active_sessions[sk] = asyncio.Event()
+        adapter._start_session_processing = MagicMock()
+
+        await adapter.handle_message(_make_event("/queue " + "x" * 3500))
+
+        assert not any("handled:queue" in r for r in adapter.sent_responses)
+
+    @pytest.mark.asyncio
+    async def test_long_steer_does_not_bypass(self):
+        adapter = _make_adapter()
+        sk = _session_key()
+        adapter._active_sessions[sk] = asyncio.Event()
+        adapter._start_session_processing = MagicMock()
+
+        await adapter.handle_message(_make_event("/steer " + "y" * 3500))
+
+        assert not any("handled:steer" in r for r in adapter.sent_responses)
+
+    @pytest.mark.asyncio
+    async def test_stop_always_bypasses_regardless_of_length(self):
+        adapter = _make_adapter()
+        sk = _session_key()
+        adapter._active_sessions[sk] = asyncio.Event()
+
+        await adapter.handle_message(_make_event("/stop " + "z" * 5000))
+
+        assert sk not in adapter._pending_messages
+        assert any("handled:stop" in r for r in adapter.sent_responses)
