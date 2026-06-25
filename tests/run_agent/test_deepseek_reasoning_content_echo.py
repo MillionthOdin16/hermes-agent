@@ -121,8 +121,42 @@ class TestCopyReasoningContentForApi:
         }
         api_msg: dict = {}
         agent._copy_reasoning_content_for_api(source, api_msg)
-        assert api_msg.get("reasoning_content") == " "
+        assert api_msg["reasoning_content"] == " "
 
+    def test_non_thinking_provider_drops_explicit_reasoning_content(self) -> None:
+        """Reasoning-heavy sessions must not resend old reasoning every turn."""
+        agent = _make_agent(
+            provider="minimax",
+            model="MiniMax-M2.7",
+            base_url="https://api.minimax.io/anthropic",
+        )
+        source = {
+            "role": "assistant",
+            "content": "done",
+            "reasoning": "internal trace",
+            "reasoning_content": "internal trace",
+        }
+        api_msg: dict = {}
+        agent._copy_reasoning_content_for_api(source, api_msg)
+        assert "reasoning_content" not in api_msg
+        agent._copy_reasoning_content_for_api(source, api_msg)
+        assert "reasoning_content" not in api_msg
+
+    def test_non_thinking_provider_does_not_promote_reasoning_field(self) -> None:
+        """Internal reasoning is not provider-facing unless echo-back is required."""
+        agent = _make_agent(
+            provider="minimax",
+            model="MiniMax-M2.7",
+            base_url="https://api.minimax.io/anthropic",
+        )
+        source = {
+            "role": "assistant",
+            "content": "done",
+            "reasoning": "old internal trace",
+        }
+        api_msg: dict = {}
+        agent._copy_reasoning_content_for_api(source, api_msg)
+        assert "reasoning_content" not in api_msg
     def test_deepseek_assistant_no_tool_call_gets_padded(self) -> None:
         """DeepSeek thinking mode pads ALL assistant turns, even without tool_calls."""
         agent = _make_agent(provider="deepseek", model="deepseek-v4-flash")
