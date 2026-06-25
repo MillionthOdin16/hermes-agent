@@ -2020,6 +2020,20 @@ class TestSummaryTargetRatio:
         # 50% of 200K = 100K, which is above the 64K floor
         assert c.threshold_tokens == 100_000
 
+    def test_threshold_tokens_cap_applies_on_initial_construction(self):
+        """Configured caps must apply before any model switch/update occurs."""
+        with patch("agent.context_compressor.get_model_context_length", return_value=1_000_000):
+            c = ContextCompressor(
+                model="test",
+                quiet_mode=True,
+                threshold_percent=0.88,
+                threshold_tokens_cap=250_000,
+                summary_target_ratio=0.20,
+            )
+
+        assert c.threshold_tokens == 250_000
+        assert c.tail_token_budget == 50_000
+
     def test_default_protect_last_n_is_20(self):
         """Default protect_last_n should be 20."""
         with patch("agent.context_compressor.get_model_context_length", return_value=100_000):
