@@ -12752,8 +12752,11 @@ def _is_default_local_cdp(parsed) -> bool:
 def _http_ok(url: str, timeout: float) -> bool:
     import urllib.request
 
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return False
+
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310
             return 200 <= getattr(resp, "status", 200) < 300
     except Exception:
         return False
