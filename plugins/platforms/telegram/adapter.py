@@ -7145,8 +7145,15 @@ class TelegramAdapter(BasePlatformAdapter):
         # / caption when no native quote is present.
         reply_to_id = None
         reply_to_text = None
+        reply_to_is_own_message = False
         if message.reply_to_message:
             reply_to_id = str(message.reply_to_message.message_id)
+            try:
+                from_user = getattr(message.reply_to_message, "from_user", None)
+                if from_user is not None and getattr(self._bot, "id", None) is not None:
+                    reply_to_is_own_message = from_user.id == self._bot.id
+            except Exception:
+                reply_to_is_own_message = False
             quote = getattr(message, "quote", None)
             quote_text = getattr(quote, "text", None) if quote is not None else None
             if quote_text:
@@ -7168,7 +7175,13 @@ class TelegramAdapter(BasePlatformAdapter):
                         reply_to_text = rich_sent_store.lookup(
                             str(chat.id), reply_to_id
                         )
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug(
+                            "rich_sent_store reply lookup failed for chat=%s msg=%s: %s",
+                            chat.id,
+                            reply_to_id,
+                            exc,
+                        )
                         reply_to_text = None
 
         # Per-channel/topic ephemeral prompt
