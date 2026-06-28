@@ -5282,11 +5282,12 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         preview_lines.extend(f"[bold]{_escape(line)}[/]" for line in tail)
         return "\n".join(preview_lines)
 
+    _PASTE_REF_RE = re.compile(r'\[Pasted text #\d+: \d+ lines \u2192 (.+?)\]')
+
     def _expand_paste_references(self, text: str | None) -> str:
         """Expand [Pasted text #N -> file] placeholders into file contents."""
         if not isinstance(text, str) or "[Pasted text #" not in text:
             return text or ""
-        paste_ref_re = re.compile(r'\[Pasted text #\d+: \d+ lines \u2192 (.+?)\]')
 
         def _expand_ref(match):
             path = Path(match.group(1))
@@ -5299,7 +5300,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 logger.warning("Paste file gone or unreadable, returning placeholder: %s", path)
                 return match.group(0)
 
-        return paste_ref_re.sub(_expand_ref, text)
+        return self._PASTE_REF_RE.sub(_expand_ref, text)
 
     def _print_user_message_preview(self, user_input: str) -> None:
         """Render a user message using the normal chat scrollback style."""
