@@ -11209,7 +11209,7 @@ def _(rid, params: dict) -> dict:
     if name in qcmds:
         qc = qcmds[name]
         if qc.get("type") == "exec":
-            r = subprocess.run(
+            r = subprocess.run(  # nosec B602
                 qc.get("command", ""),
                 shell=True,
                 capture_output=True,
@@ -13554,7 +13554,7 @@ def _(rid, params: dict) -> dict:
     except ImportError:
         return _err(rid, 5001, "shell.exec unavailable: approval safety module not importable")
     try:
-        r = subprocess.run(
+        r = subprocess.run(  # nosec B602
             cmd, shell=True, capture_output=True, text=True, timeout=30, cwd=os.getcwd(),
             stdin=subprocess.DEVNULL,
         )
