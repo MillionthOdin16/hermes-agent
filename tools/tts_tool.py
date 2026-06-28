@@ -1634,12 +1634,8 @@ def _compose_gemini_tts_prompt(
         "do not speak those sections aloud."
     )
 
-    placeholder_patterns = (
-        re.compile(r"\{\{\s*transcript\s*\}\}", flags=re.IGNORECASE),
-        re.compile(r"\{\s*transcript\s*\}", flags=re.IGNORECASE),
-    )
     prompt = persona_prompt
-    for pattern in placeholder_patterns:
+    for pattern in _GEMINI_PLACEHOLDER_PATTERNS:
         if pattern.search(prompt):
             prompt = pattern.sub(transcript, prompt)
             return f"{preamble}\n\n{prompt}".strip()
@@ -2550,6 +2546,12 @@ _MD_LIST_ITEM = re.compile(r'^\s*[-*]\s+', flags=re.MULTILINE)
 _MD_HR = re.compile(r'---+')
 _MD_EXCESS_NL = re.compile(r'\n{3,}')
 
+_GEMINI_PLACEHOLDER_PATTERNS = (
+    re.compile(r"\{\{\s*transcript\s*\}\}", flags=re.IGNORECASE),
+    re.compile(r"\{\s*transcript\s*\}", flags=re.IGNORECASE),
+)
+_THINK_BLOCK_RE = re.compile(r'<think[\s>].*?</think>', flags=re.DOTALL)
+
 
 def _strip_markdown_for_tts(text: str) -> str:
     """Remove markdown formatting that shouldn't be spoken aloud."""
@@ -2638,8 +2640,6 @@ def stream_tts_to_speaker(
         long_flush_len = 100
         queue_timeout = 0.5
         _spoken_sentences: list[str] = []  # track spoken sentences to skip duplicates
-        # Regex to strip complete <think>...</think> blocks from buffer
-        _think_block_re = re.compile(r'<think[\s>].*?</think>', flags=re.DOTALL)
 
         def _speak_sentence(sentence: str):
             """Display sentence and optionally generate + play audio."""
@@ -2722,7 +2722,7 @@ def stream_tts_to_speaker(
 
             if delta is None:
                 # End-of-text sentinel: strip any remaining think blocks, flush
-                sentence_buf = _think_block_re.sub('', sentence_buf)
+                sentence_buf = _THINK_BLOCK_RE.sub('', sentence_buf)
                 if sentence_buf.strip():
                     _speak_sentence(sentence_buf)
                 break
@@ -2732,7 +2732,7 @@ def stream_tts_to_speaker(
             # --- Think block filtering ---
             # Strip complete <think>...</think> blocks from buffer.
             # Works correctly even when tags span multiple deltas.
-            sentence_buf = _think_block_re.sub('', sentence_buf)
+            sentence_buf = _THINK_BLOCK_RE.sub('', sentence_buf)
 
             # If an incomplete <think tag is at the end, wait for more data
             # before extracting sentences (the closing tag may arrive next).
