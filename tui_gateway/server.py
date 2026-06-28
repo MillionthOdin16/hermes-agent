@@ -12850,9 +12850,13 @@ def _is_default_local_cdp(parsed) -> bool:
 
 def _http_ok(url: str, timeout: float) -> bool:
     import urllib.request
+    from urllib.parse import urlparse
 
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310
             return 200 <= getattr(resp, "status", 200) < 300
     except Exception:
         return False
