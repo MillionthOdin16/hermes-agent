@@ -399,6 +399,7 @@ def _split_tool_diagnostics(output: str) -> tuple[str, str]:
 # match because the path token forbids whitespace and a leading tool prefix
 # like "rg" is followed by ": " (space) which the negated class rejects.
 _SEARCH_OUTPUT_RE = re.compile(r'^([A-Za-z]:)?[^\s:][^\n]*?[:\-]\d|^[^\s:][^\s]*$')
+_MATCH_RE = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
 
 
 def _parse_search_context_line(line: str) -> tuple[str, int, str] | None:
@@ -2263,14 +2264,13 @@ class ShellFileOperations(FileOperations):
             # rg group seps:    "--"
             # Note: on Windows, paths contain drive letters (e.g. C:\path),
             # so naive split(":") breaks. Use regex to handle both platforms.
-            _match_re = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
             matches = []
             for line in stdout.strip().split('\n'):
                 if not line or line == "--":
                     continue
                 
                 # Try match line first (colon-separated: file:line:content)
-                m = _match_re.match(line)
+                m = _MATCH_RE.match(line)
                 if m:
                     matches.append(SearchMatch(
                         path=(m.group(1) or '') + m.group(2),
@@ -2388,13 +2388,12 @@ class ShellFileOperations(FileOperations):
             # grep group seps:    "--"
             # Note: on Windows, paths contain drive letters (e.g. C:\path),
             # so naive split(":") breaks. Use regex to handle both platforms.
-            _match_re = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
             matches = []
             for line in stdout.strip().split('\n'):
                 if not line or line == "--":
                     continue
                 
-                m = _match_re.match(line)
+                m = _MATCH_RE.match(line)
                 if m:
                     matches.append(SearchMatch(
                         path=(m.group(1) or '') + m.group(2),
