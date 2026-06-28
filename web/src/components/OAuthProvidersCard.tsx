@@ -151,10 +151,7 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                   <div className="flex flex-col min-w-0 gap-0.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm">{p.name}</span>
-                      <Badge
-                        tone="outline"
-                        className="text-xs tracking-wide"
-                      >
+                      <Badge tone="outline" className="text-xs tracking-wide">
                         {t.oauth.flowLabels[p.flow]}
                       </Badge>
                       {p.status.logged_in && (
@@ -222,7 +219,11 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                       className="inline-flex"
                       title={`Open ${p.name} docs`}
                     >
-                      <Button ghost size="icon">
+                      <Button
+                        ghost
+                        size="icon"
+                        aria-label={`Open ${p.name} docs`}
+                      >
                         <ExternalLink />
                       </Button>
                     </a>
