@@ -1,0 +1,3 @@
+## 2026-06-17 - Missing ARIA Labels on Nested Icon Buttons
+**Learning:** In the `OAuthProvidersCard` and similar components, icon-only `<Button>` elements nested inside `<a>` tags with `title` attributes were missing their own `aria-label`s. Screen readers may not correctly announce the purpose of the nested interactive button element without an explicit `aria-label` on the button itself.
+**Action:** When nesting interactive elements (like a `<Button>`) inside wrapper links (`<a>` tags) that provide a `title` or `aria-label`, ensure the innermost interactive element still has its own `aria-label` attribute to be correctly identified by screen readers.
