@@ -367,17 +367,17 @@ class HolographicMemoryProvider(MemoryProvider):
 
     # -- Auto-extraction (on_session_end) ------------------------------------
 
-    def _auto_extract_facts(self, messages: list) -> None:
-        _PREF_PATTERNS = [
-            re.compile(r'\bI\s+(?:prefer|like|love|use|want|need)\s+(.+)', re.IGNORECASE),
-            re.compile(r'\bmy\s+(?:favorite|preferred|default)\s+\w+\s+is\s+(.+)', re.IGNORECASE),
-            re.compile(r'\bI\s+(?:always|never|usually)\s+(.+)', re.IGNORECASE),
-        ]
-        _DECISION_PATTERNS = [
-            re.compile(r'\bwe\s+(?:decided|agreed|chose)\s+(?:to\s+)?(.+)', re.IGNORECASE),
-            re.compile(r'\bthe\s+project\s+(?:uses|needs|requires)\s+(.+)', re.IGNORECASE),
-        ]
+    _PREF_PATTERNS = [
+        re.compile(r'\bI\s+(?:prefer|like|love|use|want|need)\s+(.+)', re.IGNORECASE),
+        re.compile(r'\bmy\s+(?:favorite|preferred|default)\s+\w+\s+is\s+(.+)', re.IGNORECASE),
+        re.compile(r'\bI\s+(?:always|never|usually)\s+(.+)', re.IGNORECASE),
+    ]
+    _DECISION_PATTERNS = [
+        re.compile(r'\bwe\s+(?:decided|agreed|chose)\s+(?:to\s+)?(.+)', re.IGNORECASE),
+        re.compile(r'\bthe\s+project\s+(?:uses|needs|requires)\s+(.+)', re.IGNORECASE),
+    ]
 
+    def _auto_extract_facts(self, messages: list) -> None:
         extracted = 0
         for msg in messages:
             if msg.get("role") != "user":
@@ -386,7 +386,7 @@ class HolographicMemoryProvider(MemoryProvider):
             if not isinstance(content, str) or len(content) < 10:
                 continue
 
-            for pattern in _PREF_PATTERNS:
+            for pattern in self._PREF_PATTERNS:
                 if pattern.search(content):
                     try:
                         self._store.add_fact(content[:400], category="user_pref")
@@ -395,7 +395,7 @@ class HolographicMemoryProvider(MemoryProvider):
                         pass
                     break
 
-            for pattern in _DECISION_PATTERNS:
+            for pattern in self._DECISION_PATTERNS:
                 if pattern.search(content):
                     try:
                         self._store.add_fact(content[:400], category="project")
