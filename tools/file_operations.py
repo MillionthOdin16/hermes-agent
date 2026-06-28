@@ -54,6 +54,7 @@ WRITE_DENIED_PREFIXES = build_write_denied_prefixes(_HOME)
 
 _OSC_SEQUENCE_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _FENCE_MARKER_RE = re.compile(r"'?\x07?__HERMES_FENCE_[A-Za-z0-9]+__\x07?'?")
+_MATCH_RE = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
 
 
 def _strip_terminal_fence_leaks(text: str) -> str:
@@ -2263,14 +2264,13 @@ class ShellFileOperations(FileOperations):
             # rg group seps:    "--"
             # Note: on Windows, paths contain drive letters (e.g. C:\path),
             # so naive split(":") breaks. Use regex to handle both platforms.
-            _match_re = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
             matches = []
             for line in stdout.strip().split('\n'):
                 if not line or line == "--":
                     continue
                 
                 # Try match line first (colon-separated: file:line:content)
-                m = _match_re.match(line)
+                m = _MATCH_RE.match(line)
                 if m:
                     matches.append(SearchMatch(
                         path=(m.group(1) or '') + m.group(2),
@@ -2388,13 +2388,12 @@ class ShellFileOperations(FileOperations):
             # grep group seps:    "--"
             # Note: on Windows, paths contain drive letters (e.g. C:\path),
             # so naive split(":") breaks. Use regex to handle both platforms.
-            _match_re = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
             matches = []
             for line in stdout.strip().split('\n'):
                 if not line or line == "--":
                     continue
                 
-                m = _match_re.match(line)
+                m = _MATCH_RE.match(line)
                 if m:
                     matches.append(SearchMatch(
                         path=(m.group(1) or '') + m.group(2),
