@@ -282,11 +282,13 @@ def is_platform_supported() -> bool:
 
 def _download_file(url: str, dest: str, timeout: int = 10):
     """Download a URL to a local file."""
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise ValueError(f"Invalid URL scheme: {url}")
     req = urllib.request.Request(url)
     token = os.getenv("GITHUB_TOKEN")
     if token:
         req.add_header("Authorization", f"token {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as f:
+    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as f:  # nosec B310
         shutil.copyfileobj(resp, f)
 
 
