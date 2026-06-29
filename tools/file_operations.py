@@ -400,6 +400,10 @@ def _split_tool_diagnostics(output: str) -> tuple[str, str]:
 # like "rg" is followed by ": " (space) which the negated class rejects.
 _SEARCH_OUTPUT_RE = re.compile(r'^([A-Za-z]:)?[^\s:][^\n]*?[:\-]\d|^[^\s:][^\s]*$')
 
+# Note: on Windows, paths contain drive letters (e.g. C:\path),
+# so naive split(":") breaks. Use regex to handle both platforms.
+_SEARCH_MATCH_RE = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
+
 
 def _parse_search_context_line(line: str) -> tuple[str, int, str] | None:
     """Parse grep/rg context output in ``path-line-content`` format.
@@ -2261,16 +2265,13 @@ class ShellFileOperations(FileOperations):
             # rg match lines:   "file:lineno:content"  (colon separator)
             # rg context lines: "file-lineno-content"   (dash separator)
             # rg group seps:    "--"
-            # Note: on Windows, paths contain drive letters (e.g. C:\path),
-            # so naive split(":") breaks. Use regex to handle both platforms.
-            _match_re = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
             matches = []
             for line in stdout.strip().split('\n'):
                 if not line or line == "--":
                     continue
                 
                 # Try match line first (colon-separated: file:line:content)
-                m = _match_re.match(line)
+                m = _SEARCH_MATCH_RE.match(line)
                 if m:
                     matches.append(SearchMatch(
                         path=(m.group(1) or '') + m.group(2),
@@ -2386,15 +2387,12 @@ class ShellFileOperations(FileOperations):
             # grep match lines:   "file:lineno:content" (colon)
             # grep context lines: "file-lineno-content"  (dash)
             # grep group seps:    "--"
-            # Note: on Windows, paths contain drive letters (e.g. C:\path),
-            # so naive split(":") breaks. Use regex to handle both platforms.
-            _match_re = re.compile(r'^([A-Za-z]:)?(.*?):(\d+):(.*)$')
             matches = []
             for line in stdout.strip().split('\n'):
                 if not line or line == "--":
                     continue
                 
-                m = _match_re.match(line)
+                m = _SEARCH_MATCH_RE.match(line)
                 if m:
                     matches.append(SearchMatch(
                         path=(m.group(1) or '') + m.group(2),
