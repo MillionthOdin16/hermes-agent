@@ -416,8 +416,10 @@ def _post_provision(
             "Accept": "application/json",
         },
     )
+    if not provision_url.startswith(("http://", "https://")):
+        raise ValueError(f"Invalid scheme in provision_url: {provision_url}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             payload = json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -599,8 +601,10 @@ def _post_policy(*, policy_url: str, token: str, policy: dict, timeout: float = 
             "Accept": "application/json",
         },
     )
+    if not policy_url.startswith(("http://", "https://")):
+        raise ValueError(f"Invalid scheme in policy_url: {policy_url}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             return int(resp.status)
     except urllib.error.HTTPError as exc:
         return int(exc.code)
