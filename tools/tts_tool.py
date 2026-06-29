@@ -1092,6 +1092,11 @@ _XAI_SPEECH_TAG_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _XAI_FIRST_SENTENCE_RE = re.compile(r"^(.{12,120}?[.!?…])\s+(?=\S)", flags=re.DOTALL)
+_GEMINI_TRANSCRIPT_PLACEHOLDERS = (
+    re.compile(r"\{\{\s*transcript\s*\}\}", flags=re.IGNORECASE),
+    re.compile(r"\{\s*transcript\s*\}", flags=re.IGNORECASE),
+)
+_THINK_BLOCK_RE = re.compile(r'<think[\s>].*?</think>', flags=re.DOTALL)
 
 
 def _xai_bool_config(value: Any, default: bool = False) -> bool:
@@ -1634,10 +1639,7 @@ def _compose_gemini_tts_prompt(
         "do not speak those sections aloud."
     )
 
-    placeholder_patterns = (
-        re.compile(r"\{\{\s*transcript\s*\}\}", flags=re.IGNORECASE),
-        re.compile(r"\{\s*transcript\s*\}", flags=re.IGNORECASE),
-    )
+    placeholder_patterns = _GEMINI_TRANSCRIPT_PLACEHOLDERS
     prompt = persona_prompt
     for pattern in placeholder_patterns:
         if pattern.search(prompt):
@@ -2639,7 +2641,7 @@ def stream_tts_to_speaker(
         queue_timeout = 0.5
         _spoken_sentences: list[str] = []  # track spoken sentences to skip duplicates
         # Regex to strip complete <think>...</think> blocks from buffer
-        _think_block_re = re.compile(r'<think[\s>].*?</think>', flags=re.DOTALL)
+        _think_block_re = _THINK_BLOCK_RE
 
         def _speak_sentence(sentence: str):
             """Display sentence and optionally generate + play audio."""
