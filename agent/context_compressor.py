@@ -1569,6 +1569,49 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
             summary = summary[: _FALLBACK_SUMMARY_MAX_CHARS - 42].rstrip() + "\n...[fallback summary truncated]"
         return summary
 
+    def _build_continuity_anchor(self, messages: List[Dict[str, Any]]) -> str:
+        """Build a deterministic anchor from protected tail messages."""
+        if not messages:
+            return ""
+
+        user_items: list[str] = []
+        tool_items: list[str] = []
+        file_items: list[str] = []
+
+        def _compact(value: Any, limit: int = 420) -> str:
+            text = redact_sensitive_text(_content_text_for_contains(value))
+            text = re.sub(r"\s+", " ", text).strip()
+            if len(text) > limit:
+                text = text[: limit - 15].rstrip() + " ...[truncated]"
+            return text
+
+        for msg in messages[-8:]:
+            role = msg.get("role")
+            text = _compact(msg.get("content"))
+            _collect_path_mentions(text, file_items)
+            if role == "user" and text:
+                _dedupe_append(user_items, text, limit=4)
+            elif role == "tool" and text:
+                tool_id = str(msg.get("tool_call_id") or "tool")
+                _dedupe_append(tool_items, f"{tool_id}: {text}", limit=4)
+
+        if not user_items and not tool_items and not file_items:
+            return ""
+
+        def _bullets(items: list[str]) -> str:
+            return "\n".join(f"- {item}" for item in items) if items else "- None."
+
+        return (
+            "## Current Continuity Anchor\n"
+            "Recent protected-tail context that must survive compaction:\n\n"
+            "### Recent User Requests\n"
+            f"{_bullets(user_items)}\n\n"
+            "### Recent Tool Evidence\n"
+            f"{_bullets(tool_items)}\n\n"
+            "### Referenced Files\n"
+            f"{_bullets(file_items[:8])}"
+        )
+
     def _fallback_to_main_for_compression(self, e: Exception, reason: str) -> None:
         """Switch from a separate ``summary_model`` back to the main model.
 
@@ -2842,6 +2885,8 @@ This compaction should PRIORITISE preserving all information related to the focu
                     )
             compressed.append(msg)
 
+        summary_from_llm = bool(summary)
+
         # If LLM summary failed, insert a deterministic fallback so the model
         # gets at least locally recoverable continuity anchors instead of a
         # content-free "N messages were removed" marker.
@@ -2855,6 +2900,10 @@ This compaction should PRIORITISE preserving all information related to the focu
                 turns_to_summarize,
                 reason=self._last_summary_error,
             )
+
+        continuity_anchor = self._build_continuity_anchor(messages[compress_end:])
+        if summary_from_llm and continuity_anchor and "## Current Continuity Anchor" not in summary:
+            summary = summary.rstrip() + "\n\n" + continuity_anchor
 
         _merge_summary_into_tail = False
         last_head_role = messages[compress_start - 1].get("role", "user") if compress_start > 0 else "user"
