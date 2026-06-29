@@ -1,0 +1,3 @@
+## 2026-06-25 - Precompile Regex and Combine Replacements in text processors
+**Learning:** Calling `re.sub` repeatedly with uncompiled string patterns causes performance overhead on heavily invoked text processors (like those parsing LLM streams). Combining similar tags with backreferences (e.g., `r'<(tag1|tag2)>.*?</\1>'`) reduces the number of full O(n) string passes.
+**Action:** When working on text sanitation/tag-stripping that is called frequently, compile `re` patterns at the module level and combine target tags using backreferences where possible to reduce function-call overhead and scanning passes.
