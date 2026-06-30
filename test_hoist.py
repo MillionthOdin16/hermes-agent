@@ -1,11 +1,3 @@
-"""Shared Signal formatting helpers.
-
-Keep markdown → Signal native formatting conversion in one place so both the
-live Signal adapter and standalone send paths emit the same bodyRanges.
-"""
-
-from __future__ import annotations
-
 import re
 
 _BULLET_SPLIT_RE = re.compile(r"(```.*?```)", flags=re.DOTALL)
@@ -22,39 +14,29 @@ _INLINE_PATTERNS = [
     (re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)"), "ITALIC"),
 ]
 
+def _utf16_len(s: str) -> int:
+    """Length of *s* in UTF-16 code units."""
+    return len(s.encode("utf-16-le")) // 2
+
+def _normalize_bullet_markers(source: str) -> str:
+    """Replace Markdown bullet markers with plain Unicode bullets."""
+    parts = _BULLET_SPLIT_RE.split(source)
+    for idx, part in enumerate(parts):
+        if idx % 2 == 1:
+            continue
+        parts[idx] = _BULLET_ITEM_RE.sub(r"\1• ", part)
+    return "".join(parts)
+
+def _adjust(pos: int, removals: list[tuple[int, int]]) -> int:
+    shift = 0
+    for remove_pos, remove_len in removals:
+        if remove_pos < pos:
+            shift += min(remove_len, pos - remove_pos)
+        else:
+            break
+    return pos - shift
 
 def markdown_to_signal(text: str) -> tuple[str, list[str]]:
-    """Convert markdown to plain text + Signal textStyles list.
-
-    Signal doesn't render markdown. Instead it uses ``bodyRanges`` (exposed by
-    signal-cli as ``textStyle`` / ``textStyles`` params) with the format
-    ``start:length:STYLE``.
-
-    Positions are measured in UTF-16 code units because that's what the Signal
-    protocol uses.
-
-    Supported styles: BOLD, ITALIC, STRIKETHROUGH, MONOSPACE.
-    """
-
-    def _utf16_len(s: str) -> int:
-        """Length of *s* in UTF-16 code units."""
-        return len(s.encode("utf-16-le")) // 2
-
-    def _normalize_bullet_markers(source: str) -> str:
-        """Replace Markdown bullet markers with plain Unicode bullets.
-
-        Signal does not render Markdown list syntax, so ``- item`` and
-        ``* item`` otherwise arrive as literal Markdown markers. Preserve
-        fenced code blocks byte-for-byte; list-looking lines inside code are
-        code, not prose bullets.
-        """
-        parts = _BULLET_SPLIT_RE.split(source)
-        for idx, part in enumerate(parts):
-            if idx % 2 == 1:
-                continue
-            parts[idx] = _BULLET_ITEM_RE.sub(r"\1• ", part)
-        return "".join(parts)
-
     text = _NEWLINE_COLLAPSE_RE.sub("\n\n", text)
     text = text.strip()
     text = _normalize_bullet_markers(text)
@@ -101,19 +83,10 @@ def markdown_to_signal(text: str) -> tuple[str, list[str]]:
             removals.append((g1e, me - g1e))
     removals.sort()
 
-    def _adjust(pos: int) -> int:
-        shift = 0
-        for remove_pos, remove_len in removals:
-            if remove_pos < pos:
-                shift += min(remove_len, pos - remove_pos)
-            else:
-                break
-        return pos - shift
-
     adjusted_prior: list[tuple[int, int, str]] = []
     for start, length, style in styles:
-        new_start = _adjust(start)
-        new_end = _adjust(start + length)
+        new_start = _adjust(start, removals)
+        new_end = _adjust(start + length, removals)
         if new_end > new_start:
             adjusted_prior.append((new_start, new_end - new_start, style))
 
@@ -141,3 +114,5 @@ def markdown_to_signal(text: str) -> tuple[str, list[str]]:
         style_strings.append(f"{u16_start}:{u16_len}:{style_type}")
 
     return text, style_strings
+
+print(markdown_to_signal("**hello** *world*"))
