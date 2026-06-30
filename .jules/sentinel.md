@@ -1,0 +1,4 @@
+## 2026-06-30 - Server-Side Request Forgery (SSRF) Risk in `urllib.request.urlopen`
+**Vulnerability:** The `_http_ok` function in `tui_gateway/server.py` uses `urllib.request.urlopen` without explicitly validating the URL scheme, which creates an SSRF and local file read vulnerability (e.g., if a `file://` scheme is passed).
+**Learning:** Python's `urllib.request.urlopen` implicitly supports schemes beyond HTTP/HTTPS, such as `file://` and `ftp://`. If the URL passed to this function is directly or indirectly controlled by untrusted input, it poses a severe security risk. This vulnerability type is frequently flagged by Bandit (B310).
+**Prevention:** Always validate the URL string explicitly before passing it to `urlopen`, ensuring it begins with an expected scheme (e.g., `url.startswith(("http://", "https://"))`). Once validated, it is safe to use `# nosec B310` to suppress Bandit warnings.
