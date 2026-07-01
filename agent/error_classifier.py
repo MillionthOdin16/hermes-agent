@@ -1381,25 +1381,26 @@ def _extract_error_body(error: Exception) -> dict:
     return {}
 
 
+def _code_from_payload(payload) -> str:
+    """Extract a code/type from a nested error payload dict (defensive)."""
+    if not isinstance(payload, dict):
+        return ""
+    payload_error = payload.get("error", {})
+    if isinstance(payload_error, dict):
+        nested = payload_error.get("code") or payload_error.get("type") or ""
+        if isinstance(nested, str) and nested.strip() and nested.strip() != "400":
+            return nested.strip()
+    code = payload.get("code") or payload.get("error_code") or ""
+    if isinstance(code, (str, int)):
+        text = str(code).strip()
+        if text and text != "400":
+            return text
+    return ""
+
+
 def _extract_error_code(body: dict) -> str:
     """Extract an error code string from the response body."""
     if not body:
-        return ""
-
-    def _code_from_payload(payload) -> str:
-        """Extract a code/type from a nested error payload dict (defensive)."""
-        if not isinstance(payload, dict):
-            return ""
-        payload_error = payload.get("error", {})
-        if isinstance(payload_error, dict):
-            nested = payload_error.get("code") or payload_error.get("type") or ""
-            if isinstance(nested, str) and nested.strip() and nested.strip() != "400":
-                return nested.strip()
-        code = payload.get("code") or payload.get("error_code") or ""
-        if isinstance(code, (str, int)):
-            text = str(code).strip()
-            if text and text != "400":
-                return text
         return ""
 
     error_obj = body.get("error", {})
