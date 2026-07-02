@@ -377,6 +377,12 @@ class MemoryStore:
                     ),
                     "current_entries": entries,
                     "usage": f"{current:,}/{limit:,}",
+                    "memory_path": str(self._path_for(target)),
+                    "suggested_action": "replace_or_remove_existing_entry",
+                    "entry_previews": [
+                        e[:120] + ("..." if len(e) > 120 else "")
+                        for e in entries
+                    ],
                 })
 
             entries.append(content)
