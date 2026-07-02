@@ -991,17 +991,20 @@ def _serve_plugin_skill(
                 "Could not preprocess plugin skill %s:%s", namespace, bare, exc_info=True
             )
 
-    return json.dumps(
-        {
-            "success": True,
-            "name": f"{namespace}:{bare}",
-            "content": f"{banner}{rendered_content}" if banner else rendered_content,
-            "description": description,
-            "linked_files": None,
-            "readiness_status": SkillReadinessStatus.AVAILABLE.value,
-        },
-        ensure_ascii=False,
+    full_content = f"{banner}{rendered_content}" if banner else rendered_content
+    bounded_content, bound_meta = _maybe_bound_skill_view_content(
+        full_content, max_chars=MAX_SKILL_VIEW_CONTENT_CHARS, label=f"{namespace}:{bare}"
     )
+    result = {
+        "success": True,
+        "name": f"{namespace}:{bare}",
+        "content": bounded_content,
+        "description": description,
+        "linked_files": None,
+        "readiness_status": SkillReadinessStatus.AVAILABLE.value,
+        **bound_meta,
+    }
+    return json.dumps(result, ensure_ascii=False)
 
 
 def skill_view(
@@ -1461,6 +1464,11 @@ def skill_view(
                     target_file,
                     exc_info=True,
                 )
+            content, content_meta = _maybe_bound_skill_view_content(
+                content,
+                max_chars=MAX_SKILL_VIEW_FILE_CHARS,
+                label=f"skill file {file_path}",
+            )
 
             return json.dumps(
                 {
@@ -1469,6 +1477,7 @@ def skill_view(
                     "file": file_path,
                     "content": content,
                     "file_type": target_file.suffix,
+                    **content_meta,
                 },
                 ensure_ascii=False,
             )
@@ -1633,6 +1642,12 @@ def skill_view(
                     "Could not preprocess skill content for %s", skill_name, exc_info=True
                 )
 
+        rendered_content, content_meta = _maybe_bound_skill_view_content(
+            rendered_content,
+            max_chars=MAX_SKILL_VIEW_CONTENT_CHARS,
+            label=f"skill {skill_name}",
+        )
+
         result = {
             "success": True,
             "name": skill_name,
@@ -1656,6 +1671,7 @@ def skill_view(
             "readiness_status": SkillReadinessStatus.SETUP_NEEDED.value
             if setup_needed
             else SkillReadinessStatus.AVAILABLE.value,
+            **content_meta,
         }
 
         setup_help = next((e["help"] for e in required_env_vars if e.get("help")), None)
@@ -1770,7 +1786,7 @@ SKILLS_LIST_SCHEMA = {
 
 SKILL_VIEW_SCHEMA = {
     "name": "skill_view",
-    "description": "Skills allow for loading information about specific tasks and workflows, as well as scripts and templates. Load a skill's full content or access its linked files (references, templates, scripts). First call returns SKILL.md content plus a 'linked_files' dict showing available references/templates/scripts. To access those, call again with file_path parameter.",
+    "description": "Skills allow for loading information about specific tasks and workflows, as well as scripts and templates. Load bounded SKILL.md content or access linked files (references, templates, scripts). Large content is returned as a head/tail excerpt with content_truncated metadata; call again with file_path for specific linked files.",
     "parameters": {
         "type": "object",
         "properties": {
