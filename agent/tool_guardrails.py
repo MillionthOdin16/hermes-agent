@@ -186,7 +186,7 @@ def canonical_tool_args(args: Mapping[str, Any]) -> str:
     )
 
 
-def classify_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str]:
+def classify_tool_failure(tool_name: str, result: Any) -> tuple[bool, str]:
     """Safety-fallback classifier used only when callers don't pass ``failed``.
 
     Mirrors ``agent.display._detect_tool_failure`` exactly so the guardrail
@@ -205,6 +205,9 @@ def classify_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str
         if isinstance(data, dict):
             exit_code = data.get("exit_code")
             if exit_code is not None and exit_code != 0:
+                err_msg = data.get("error")
+                if err_msg:
+                    return True, f" [{str(err_msg).strip()[:48]}]"
                 return True, f" [exit {exit_code}]"
         return False, ""
 
@@ -214,6 +217,18 @@ def classify_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str
             if data.get("success") is False and "exceed the limit" in data.get("error", ""):
                 return True, " [full]"
 
+    # Non-string results (multimodal, etc.) are always successes
+    if not isinstance(result, str):
+        return False, ""
+
+    # Structured JSON check: parse first, then inspect for explicit errors
+    data = safe_json_loads(result)
+    if isinstance(data, dict):
+        err = data.get("error") or data.get("message")
+        if err and (data.get("success") is False or "error" in data):
+            return True, f" [{str(err).strip()[:48]}]"
+
+    # Generic heuristic for unparseable or plain-text results
     lower = result[:500].lower()
     if '"error"' in lower or '"failed"' in lower or result.startswith("Error"):
         return True, " [error]"
