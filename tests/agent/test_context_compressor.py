@@ -1766,6 +1766,39 @@ class TestCompressWithClient:
             "respond to the message below, not the summary above ---"
         )
 
+    def test_summary_contains_deterministic_continuity_anchor(self):
+        """The compressed checkpoint should preserve fresh tail context
+        outside the auxiliary summarizer's generated prose."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "summary text"
+
+        with patch("agent.context_compressor.get_model_context_length", return_value=100000):
+            c = ContextCompressor(model="test", quiet_mode=True, protect_first_n=2, protect_last_n=3)
+
+        msgs = [
+            {"role": "user", "content": "old task"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "middle 1"},
+            {"role": "assistant", "content": "middle 2"},
+            {"role": "tool", "tool_call_id": "call_1", "content": "D:/models/router/model.gguf exists"},
+            {"role": "user", "content": "What VMS?. There are no VMS. Check the error logs on desktop"},
+            {"role": "assistant", "content": "I'll check the logs now."},
+            {"role": "tool", "tool_call_id": "call_2", "content": "errors.log: context window exceeds limit"},
+        ]
+
+        with patch("agent.context_compressor.call_llm", return_value=mock_response):
+            result = c.compress(msgs)
+
+        summary_text = "\n".join(
+            str(m.get("content") or "")
+            for m in result
+            if SUMMARY_PREFIX in str(m.get("content") or "")
+        )
+        assert "Current Continuity Anchor" in summary_text
+        assert "What VMS?. There are no VMS. Check the error logs on desktop" in summary_text
+        assert "errors.log: context window exceeds limit" in summary_text
+
     def test_summary_role_avoids_consecutive_user_messages(self):
         """Summary role should alternate with the last head message to avoid consecutive same-role messages."""
         mock_client = MagicMock()
