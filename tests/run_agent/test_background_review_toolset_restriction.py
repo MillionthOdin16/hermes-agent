@@ -135,6 +135,41 @@ def test_background_review_installs_thread_local_whitelist():
     assert "execute_code" not in whitelist
 
 
+def test_background_review_prompt_names_allowed_tools():
+    """The fork prompt should tell the model the exact permitted tools.
+
+    Runtime denial remains the safety backstop, but the model should not be
+    left to infer that read_file/search_files/patch are unavailable.
+    """
+    import run_agent
+
+    agent = _make_agent_stub(run_agent.AIAgent)
+    captured = {}
+
+    def _no_init(self, *args, **kwargs):
+        return None
+
+    def _capture_run(self, *, user_message, conversation_history):
+        captured["user_message"] = user_message
+
+    with patch.object(run_agent.AIAgent, "__init__", _no_init), \
+         patch.object(run_agent.AIAgent, "run_conversation", _capture_run), \
+         patch("threading.Thread", _SyncThread):
+        agent._spawn_background_review(
+            messages_snapshot=[],
+            review_memory=True,
+            review_skills=True,
+        )
+
+    prompt = captured["user_message"]
+    assert "Allowed tools:" in prompt
+    assert "memory" in prompt
+    assert "skill_view" in prompt
+    assert "skills_list" in prompt
+    assert "Do not call read_file" in prompt
+    assert "terminal" in prompt
+
+
 def test_background_review_agent_tools_are_limited():
     """Verify the resolved memory+skills toolsets only contain memory and skill tools.
 
