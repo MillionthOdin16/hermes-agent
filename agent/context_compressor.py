@@ -806,14 +806,10 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.context_length = context_length
-        # max_tokens=None here means "caller didn't specify" → keep the existing
-        # output reservation. A switch that genuinely changes the output budget
-        # passes the new value explicitly. (#43547)
-        if max_tokens is not None:
-            self.max_tokens = self._coerce_max_tokens(max_tokens)
-        self.threshold_tokens = self._compute_threshold_tokens(
-            context_length, self.threshold_percent, self.max_tokens,
-        )
+        threshold = int(context_length * self.threshold_percent)
+        if self.threshold_tokens_cap > 0:
+            threshold = min(threshold, self.threshold_tokens_cap)
+        self.threshold_tokens = max(threshold, MINIMUM_CONTEXT_LENGTH)
         # Recalculate token budgets for the new context length so the
         # compressor stays calibrated after a model switch (e.g. 200K → 32K).
         target_tokens = int(self.threshold_tokens * self.summary_target_ratio)
@@ -925,6 +921,7 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        threshold_tokens_cap: int = 0,
         max_tokens: int | None = None,
     ):
         self.model = model
@@ -933,6 +930,7 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.threshold_percent = threshold_percent
+        self.threshold_tokens_cap = threshold_tokens_cap
         self.protect_first_n = protect_first_n
         self.protect_last_n = protect_last_n
         self.summary_target_ratio = max(0.10, min(summary_target_ratio, 0.80))
@@ -958,12 +956,11 @@ class ContextCompressor(ContextEngine):
         # Floor: never compress below MINIMUM_CONTEXT_LENGTH tokens even if
         # the percentage would suggest a lower value.  This prevents premature
         # compression on large-context models at 50% while keeping the % sane
-        # for models right at the minimum. _compute_threshold_tokens also
-        # guards the degenerate case where the floor would equal/exceed the
-        # window (small models), so auto-compression can still fire (#14690).
-        self.threshold_tokens = self._compute_threshold_tokens(
-            self.context_length, threshold_percent, self.max_tokens,
-        )
+        # for models right at the minimum.
+        threshold = int(self.context_length * threshold_percent)
+        if self.threshold_tokens_cap > 0:
+            threshold = min(threshold, self.threshold_tokens_cap)
+        self.threshold_tokens = max(threshold, MINIMUM_CONTEXT_LENGTH)
         self.compression_count = 0
 
         # Derive token budgets: ratio is relative to the threshold, not total context
