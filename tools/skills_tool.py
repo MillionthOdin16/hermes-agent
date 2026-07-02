@@ -851,6 +851,54 @@ def skills_list(category: str = None, task_id: str = None) -> str:
 
 # ── Plugin skill serving ──────────────────────────────────────────────────
 
+MAX_SKILL_VIEW_CONTENT_CHARS = 32_000
+MAX_SKILL_VIEW_FILE_CHARS = 50_000
+
+
+def _truncate_head_tail(text: str, max_chars: int, *, label: str) -> str:
+    """Bound large skill payloads while preserving frontmatter and final notes."""
+    if len(text) <= max_chars:
+        return text
+    marker = (
+        f"\n\n[... middle of {label} truncated by skill_view; "
+        "request a specific linked file_path for more detail, or set "
+        "HERMES_SKILL_VIEW_FULL_CONTENT=1 to disable this cap ...]\n\n"
+    )
+    if max_chars <= len(marker) + 40:
+        return text[:max_chars]
+    remaining = max_chars - len(marker)
+    head_chars = remaining // 2
+    tail_chars = remaining - head_chars
+    return f"{text[:head_chars]}{marker}{text[-tail_chars:]}"
+
+
+def _maybe_bound_skill_view_content(
+    content: str,
+    *,
+    max_chars: int,
+    label: str,
+) -> tuple[str, Dict[str, Any]]:
+    """Return bounded content plus response metadata for skill_view callers."""
+    original_chars = len(content)
+    base_meta = {
+        "content_original_chars": original_chars,
+        "content_returned_chars": original_chars,
+    }
+    if env_var_enabled("HERMES_SKILL_VIEW_FULL_CONTENT") or original_chars <= max_chars:
+        return content, {"content_truncated": False, **base_meta}
+    bounded = _truncate_head_tail(content, max_chars, label=label)
+    return bounded, {
+        "content_truncated": True,
+        "content_original_chars": original_chars,
+        "content_returned_chars": len(bounded),
+        "truncation_hint": (
+            "skill_view returned a bounded head/tail excerpt to avoid inflating "
+            "future requests. Use skill_view(name, file_path=...) for linked "
+            "files or HERMES_SKILL_VIEW_FULL_CONTENT=1 when the full SKILL.md "
+            "must be loaded in one result."
+        ),
+    }
+
 
 def _serve_plugin_skill(
     skill_md: Path,
