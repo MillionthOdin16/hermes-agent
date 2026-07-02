@@ -68,6 +68,7 @@ Usage:
 
 import json
 import logging
+import time
 
 from hermes_constants import get_hermes_home, display_hermes_home
 import os
@@ -75,6 +76,13 @@ import re
 from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Dict, Any, List, Optional, Set, Tuple
+
+# Module-level caches for skill resolution performance.
+# _skills_list_cache: (timestamp, skills_list_result) — 5 minute TTL
+# _frontmatter_name_index: Dict[skill_dir, Dict[name, (skill_dir, skill_md)]] — built lazily per scan_dir
+_SKILLS_LIST_CACHE_TTL = 300  # 5 minutes
+_skills_list_cache: Optional[Tuple[float, List[Dict[str, Any]]]] = None
+_frontmatter_name_index: Dict[Path, Dict[str, Tuple[Path, Path]]] = {}
 
 from tools.registry import registry, tool_error
 from hermes_cli.config import cfg_get
@@ -601,6 +609,29 @@ def _is_skill_disabled(name: str, platform: str = None) -> bool:
         return False
 
 
+def _get_cached_skills_list() -> Optional[List[Dict[str, Any]]]:
+    """Return cached skills list if fresh, else None. TTL: _SKILLS_LIST_CACHE_TTL seconds."""
+    global _skills_list_cache
+    if _skills_list_cache is None:
+        return None
+    timestamp, skills = _skills_list_cache
+    if time.monotonic() - timestamp < _SKILLS_LIST_CACHE_TTL:
+        return skills
+    return None
+
+
+def _set_cached_skills_list(skills: List[Dict[str, Any]]) -> None:
+    """Store skills list in cache with current timestamp."""
+    global _skills_list_cache
+    _skills_list_cache = (time.monotonic(), skills)
+
+
+def _invalidate_skills_list_cache() -> None:
+    """Clear the skills list cache. Call after patch application."""
+    global _skills_list_cache
+    _skills_list_cache = None
+
+
 def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
     """Recursively find all skills in ~/.hermes/skills/ and external dirs.
 
@@ -713,8 +744,17 @@ def skills_list(category: str = None, task_id: str = None) -> str:
                 ensure_ascii=False,
             )
 
-        # Find all skills
-        all_skills = _find_all_skills()
+        # Use cached result when possible (5-minute TTL, default skip_disabled=True path only)
+        if category is None:
+            cached = _get_cached_skills_list()
+            if cached is not None:
+                all_skills = cached
+            else:
+                all_skills = _find_all_skills()
+                _set_cached_skills_list(all_skills)
+        else:
+            # Category filter — always scan fresh (category changes cache key)
+            all_skills = _find_all_skills()
 
         if not all_skills:
             return json.dumps(
@@ -1082,31 +1122,58 @@ def skill_view(
                     _record(None, found_md)
 
         if len(candidates) > 1:
-            paths = [str(smd) for _, smd in candidates]
-            logging.getLogger(__name__).warning(
-                "Skill name collision for '%s': %d candidates — %s",
-                name, len(candidates), "; ".join(paths),
+            # Rank candidates by structural quality and pick the best.
+            # Priority: has skill_dir > local > SKILL.md > shorter path.
+            scored = []
+            for sd, smd in candidates:
+                dir_score = 3 if sd else 0          # has directory = better
+                try:
+                    smd.resolve().relative_to(all_dirs[0])
+                    local_score = 2                   # local beats external
+                except ValueError:
+                    local_score = 0
+                type_score = 1 if smd.name == "SKILL.md" else 0  # SKILL.md > flat .md
+                depth_score = -len(smd.parts)          # fewer segments = better
+                total = dir_score + local_score + type_score + depth_score
+                scored.append((total, sd, smd))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            best_total, best_sd, best_smd = scored[0]
+            logger.warning(
+                "Skill name collision for '%s': %d candidates — picked %s (score=%d)",
+                name, len(candidates), best_smd, best_total,
             )
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": (
-                        f"Ambiguous skill name '{name}': {len(candidates)} skills "
-                        "match across your local skills dir and external_dirs. "
-                        "Refusing to guess — load one explicitly by its categorized path."
-                    ),
-                    "matches": paths,
-                    "hint": (
-                        "Pass the full relative path instead of the bare name "
-                        "(e.g., 'category/skill-name'), or rename one of the "
-                        "colliding skills so each name is unique."
-                    ),
-                },
-                ensure_ascii=False,
-            )
+            logger.warning("Other candidates: %s", [str(s) for _, _, s in scored[1:]])
+            candidates = [(best_sd, best_smd)]
 
         if candidates:
             skill_dir, skill_md = candidates[0]
+
+        # Strategy 2b (fallback): match by frontmatter name.
+        # Only runs when all fast strategies failed. Bridges the gap between
+        # _find_all_skills (resolves by frontmatter name) and skill_view
+        # (resolves by filesystem name). Caches the index per scan_dir.
+        if not skill_md:
+            for search_dir in all_dirs:
+                if search_dir not in _frontmatter_name_index:
+                    index: Dict[str, Tuple[Path, Path]] = {}
+                    for fm_skill_md in iter_skill_index_files(search_dir, "SKILL.md"):
+                        try:
+                            fm_content = fm_skill_md.read_text(encoding="utf-8")[:512]
+                            fm, _ = _parse_frontmatter(fm_content)
+                            fm_name = fm.get("name", "")
+                            if fm_name and fm_name not in index:
+                                index[fm_name] = (fm_skill_md.parent, fm_skill_md)
+                        except Exception:
+                            continue
+                    _frontmatter_name_index[search_dir] = index
+                fm_index = _frontmatter_name_index[search_dir]
+                if name in fm_index:
+                    skill_dir, skill_md = fm_index[name]
+                    logger.info(
+                        "Skill '%s' resolved via frontmatter name index: %s",
+                        name, skill_md,
+                    )
+                    break
 
         if not skill_md or not skill_md.exists():
             available = [s["name"] for s in _sort_skills(_find_all_skills())[:20]]
