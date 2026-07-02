@@ -3529,6 +3529,45 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 "telegram topic binding refresh failed (%s)", reason, exc_info=True,
             )
 
+    def _persist_gateway_session_rollover(
+        self,
+        *,
+        session_key: str | None,
+        source: SessionSource,
+        session_entry,
+        new_session_id: str,
+        reason: str,
+    ) -> bool:
+        """Persist all gateway state that follows a compression child session."""
+        old_session_id = getattr(session_entry, "session_id", None)
+        if not old_session_id or not new_session_id or old_session_id == new_session_id:
+            return False
+
+        session_entry.session_id = new_session_id
+        self.session_store._save()
+        self._sync_telegram_topic_binding(source, session_entry, reason=reason)
+
+        try:
+            from hermes_cli.goals import migrate_goal_session
+            migrate_goal_session(old_session_id, new_session_id, reason=reason)
+        except Exception:
+            logger.debug(
+                "goal migration failed during session rollover (%s): %s -> %s",
+                reason, old_session_id, new_session_id, exc_info=True,
+            )
+
+        _cache_lock = getattr(self, "_agent_cache_lock", None)
+        _cache = getattr(self, "_agent_cache", None)
+        if session_key and _cache_lock and _cache is not None:
+            with _cache_lock:
+                cached = _cache.get(session_key)
+                cached_agent = cached[0] if cached else None
+                cached_session_id = getattr(cached_agent, "session_id", None)
+                if cached_session_id and cached_session_id != new_session_id:
+                    _cache.pop(session_key, None)
+
+        return True
+
     def _recover_telegram_topic_thread_id(
         self,
         source: SessionSource,
@@ -11169,16 +11208,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # session_entry so transcript writes below go to the right session.
             if agent_result.get("session_id") and agent_result["session_id"] != session_entry.session_id:
                 if session_entry.session_id == _run_start_session_id:
-                    session_entry.session_id = agent_result["session_id"]
-                    self.session_store._save()
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=session_entry,
+                        new_session_id=agent_result["session_id"],
+                        reason="agent-result-compression",
+                    )
                     self.session_store._record_gateway_session_peer(
                         session_entry.session_id,
                         session_key,
                         source,
-                    )
-                    await asyncio.to_thread(
-                        self._sync_telegram_topic_binding,
-                        source, session_entry, reason="agent-result-compression",
                     )
                 else:
                     logger.info(
@@ -12941,6 +12981,24 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
 
 
+                # Re-append the verbatim tail after the compressed head,
+                # guarding the seam against illegal role adjacency.
+                if partial and tail:
+                    compressed = rejoin_compressed_head_and_tail(compressed, tail)
+
+                # _compress_context already calls end_session() on the old session
+                # (preserving its full transcript in SQLite) and creates a new
+                # session_id for the continuation.  Write the compressed messages
+                # into the NEW session so the original history stays searchable.
+                new_session_id = tmp_agent.session_id
+                if new_session_id != session_entry.session_id:
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=session_entry,
+                        new_session_id=new_session_id,
+                        reason="compress-command",
+                    )
 
 
     async def _get_telegram_topic_capabilities(self, source: SessionSource) -> dict:
@@ -17363,6 +17421,30 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     except Exception:
                         pass
 
+                        cached_agent = cached[0]
+                        cached_session_id = getattr(cached_agent, "session_id", None)
+                        if cached_session_id and cached_session_id != session_id:
+                            logger.info(
+                                "Evicting cached agent for %s: cached session %s "
+                                "does not match active session %s",
+                                session_key,
+                                cached_session_id,
+                                session_id,
+                            )
+                            _cache.pop(session_key, None)
+                        else:
+                            agent = cached_agent
+                        # Refresh LRU order so the cap enforcement evicts
+                        # truly-oldest entries, not the one we just used.
+                        if agent is not None and hasattr(_cache, "move_to_end"):
+                            try:
+                                _cache.move_to_end(session_key)
+                            except KeyError:
+                                pass
+                        if agent is not None:
+                            self._init_cached_agent_for_turn(agent, _interrupt_depth)
+                            logger.debug("Reusing cached agent for session %s", session_key)
+
             if agent is None:
                 # Config changed or first message — create fresh agent
                 agent = AIAgent(
@@ -18175,6 +18257,68 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         unique_tags.insert(0, "[[audio_as_voice]]")
                     final_response = final_response + "\n" + "\n".join(unique_tags)
             
+            # Sync session_id: the agent may have created a new session during
+            # mid-run context compression (_compress_context splits sessions).
+            # If so, update the session store entry so the NEXT message loads
+            # the compressed transcript, not the stale pre-compression one.
+            agent = agent_holder[0]
+            _session_was_split = False
+            if agent and session_key and hasattr(agent, 'session_id') and agent.session_id != session_id:
+                _session_was_split = True
+                logger.info(
+                    "Session split detected: %s → %s (compression)",
+                    session_id, agent.session_id,
+                )
+                entry = self.session_store._entries.get(session_key)
+                if entry:
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=entry,
+                        new_session_id=agent.session_id,
+                        reason="run-agent-compression",
+                    )
+
+                # If this is a Telegram DM and source.thread_id was lost during
+                # the session split (synthetic / recovered event), restore it
+                # from the binding so _thread_metadata_for_source produces the
+                # correct message_thread_id instead of routing to the General
+                # thread.  Failure here is non-fatal — we log and continue;
+                # worst case the message lands in General, which is the
+                # pre-fix behaviour.
+                if (
+                    getattr(source, "platform", None) == Platform.TELEGRAM
+                    and getattr(source, "chat_type", None) == "dm"
+                    and getattr(source, "thread_id", None) is None
+                    and self._session_db is not None
+                ):
+                    try:
+                        _binding = self._session_db.get_telegram_topic_binding_by_session(
+                            session_id=agent.session_id,
+                        )
+                        if _binding and _binding.get("thread_id"):
+                            source.thread_id = str(_binding["thread_id"])
+                            logger.debug(
+                                "Restored source.thread_id=%s from binding after session split %s → %s",
+                                source.thread_id,
+                                session_id,
+                                agent.session_id,
+                            )
+                    except Exception:
+                        logger.debug(
+                            "Failed to restore thread_id from binding after session split",
+                            exc_info=True,
+                        )
+
+            effective_session_id = getattr(agent, 'session_id', session_id) if agent else session_id
+
+            # When compression created a new session, the messages list was
+            # shortened.  Using the original history offset would produce an
+            # empty new_messages slice, causing the gateway to write only a
+            # user/assistant pair — losing the compressed summary and tail.
+            # Reset to 0 so the gateway writes ALL compressed messages.
+            _effective_history_offset = 0 if _session_was_split else len(agent_history)
+
             # Auto-generate session title after first exchange (non-blocking)
             if final_response and self._session_db:
                 try:
