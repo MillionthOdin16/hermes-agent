@@ -181,11 +181,17 @@ class GatewaySlashCommandsMixin:
             pass
 
         # Reset the session
+        retained_model_override = self._session_model_overrides.get(session_key)
+        if retained_model_override is not None:
+            retained_model_override = dict(retained_model_override)
         new_entry = self.session_store.reset_session(session_key)
 
-        # Clear any session-scoped model/reasoning overrides so the next agent
-        # picks up configured defaults instead of previous session switches.
-        self._session_model_overrides.pop(session_key, None)
+        # /new is a conversation boundary, not a model switch. Keep the current
+        # session model so the new agent starts with the model the user selected.
+        if retained_model_override is not None:
+            self._session_model_overrides[session_key] = retained_model_override
+        else:
+            self._session_model_overrides.pop(session_key, None)
         self._set_session_reasoning_override(session_key, None)
         if hasattr(self, "_pending_model_notes"):
             self._pending_model_notes.pop(session_key, None)
