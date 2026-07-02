@@ -2796,17 +2796,19 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
             _stream_stale_timeout = max(_stream_stale_timeout_base, 240.0)
         else:
             _stream_stale_timeout = _stream_stale_timeout_base
-        # Reasoning-model floor: known reasoning models (Nemotron 3 Ultra,
-        # OpenAI o1/o3, Anthropic Opus 4.x thinking, DeepSeek R1, Qwen QwQ,
-        # xAI Grok reasoning, etc.) routinely exceed the default 180s chat-
-        # model threshold during their thinking phase.  The cloud gateway
-        # upstream kills the socket first, surfacing as BrokenPipeError.
-        # Raises the floor only — never overrides explicit user config
-        # (handled by get_provider_stale_timeout above).
-        from agent.reasoning_timeouts import get_reasoning_stale_timeout_floor
-        _reasoning_floor = get_reasoning_stale_timeout_floor(api_kwargs.get("model"))
-        if _reasoning_floor is not None:
-            _stream_stale_timeout = max(_stream_stale_timeout, _reasoning_floor)
+
+    # Reasoning-model floor: known reasoning models (Nemotron 3 Ultra,
+    # OpenAI o1/o3, Anthropic Opus 4.x thinking, DeepSeek R1, Qwen QwQ,
+    # xAI Grok reasoning, etc.) routinely exceed the default 180s chat-
+    # model threshold during their thinking phase.  The cloud gateway
+    # upstream kills the socket first, surfacing as BrokenPipeError.
+    # Resolved unconditionally so the TTFB watchdog below can consult
+    # it; raises the stale-timeout floor only — never overrides explicit
+    # user config (handled by get_provider_stale_timeout above).
+    from agent.reasoning_timeouts import get_reasoning_stale_timeout_floor
+    _reasoning_floor = get_reasoning_stale_timeout_floor(api_kwargs.get("model"))
+    if _reasoning_floor is not None and _stream_stale_timeout != float("inf"):
+        _stream_stale_timeout = max(_stream_stale_timeout, _reasoning_floor)
 
     t = threading.Thread(target=_call, daemon=True)
     t.start()
@@ -2830,6 +2832,72 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
             agent._touch_activity(
                 f"waiting for stream response ({_waiting_secs}s, no chunks yet)"
             )
+
+        # First-byte (TTFB) watchdog.  Separate from the long-running
+        # stale timeout: when the stream is alive but no chunk has arrived
+        # yet, the connection is most likely dead at the load-balancer /
+        # CDN level (TCP / TLS handshake succeeded, the upstream is silent).
+        # A 90 s default catches the bulk of these without killing healthy
+        # long-prefill requests; tune with HERMES_STREAMING_TTFB_SECONDS.
+        # After the first real chunk, this check is bypassed and the
+        # ordinary stale timeout governs the rest of the stream.
+        #
+        # Disabled when:
+        #  - local provider (prefill legitimately takes minutes)
+        #  - reasoning-model floor is non-empty (extended thinking)
+        #  - operator set HERMES_STREAMING_TTFB_SECONDS=0
+        _ttfb_secs = env_float("HERMES_STREAMING_TTFB_SECONDS", 90.0)
+        _first_chunk_received = False
+        try:
+            _ttfb_diag = request_client_holder.get("diag") or {}
+            _first_chunk_received = _ttfb_diag.get("first_chunk_at") is not None
+        except Exception:
+            pass
+        if (
+            _ttfb_secs > 0
+            and not _first_chunk_received
+            and (not agent.base_url or not is_local_endpoint(agent.base_url))
+            and _reasoning_floor is None
+        ):
+            _ttfb_elapsed = time.time() - last_chunk_time["t"]
+            if _ttfb_elapsed > _ttfb_secs:
+                _est_ctx_ttfb = estimate_request_context_tokens(api_kwargs)
+                logger.warning(
+                    "Streaming TTFB exceeded %.0fs (threshold %.0fs) "
+                    "— no first chunk yet. model=%s context=~%s tokens. "
+                    "Killing connection so retry can reconnect.",
+                    _ttfb_elapsed, _ttfb_secs,
+                    api_kwargs.get("model", "unknown"),
+                    f"{_est_ctx_ttfb:,}",
+                )
+                agent._buffer_status(
+                    f"⚠️ No first byte from provider in {int(_ttfb_elapsed)}s "
+                    f"(model: {api_kwargs.get('model', 'unknown')}). "
+                    f"Reconnecting..."
+                )
+                try:
+                    _close_request_client_once("ttfb_kill")
+                except Exception:
+                    pass
+                if agent.api_mode == "anthropic_messages":
+                    try:
+                        agent._anthropic_client.close()
+                        agent._rebuild_anthropic_client()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        agent._replace_primary_openai_client(
+                            reason="ttfb_pool_cleanup"
+                        )
+                    except Exception:
+                        pass
+                # Reset the timer so we don't kill repeatedly while the
+                # inner thread processes the closure.
+                last_chunk_time["t"] = time.time()
+                agent._touch_activity(
+                    f"ttfb stall detected after {int(_ttfb_elapsed)}s, reconnecting"
+                )
 
         # Detect stale streams: connections kept alive by SSE pings
         # but delivering no real chunks.  Kill the client so the
