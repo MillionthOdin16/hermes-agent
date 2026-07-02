@@ -634,12 +634,51 @@ class TestPreflightCompression:
             f"First preflight pass should see the full history, got "
             f"{len(first_call_messages)} messages"
         )
-        assert result["completed"] is True
-        assert result["final_response"] == "After preflight"
         assert any(
             ev == "lifecycle" and "Preflight compression" in msg
             for ev, msg in status_messages
         )
+
+    def test_preflight_retries_when_compression_rewrites_same_message_count(self, agent):
+        """Preflight compression can make progress without reducing message count."""
+        agent.compression_enabled = True
+        agent.context_compressor.context_length = 2000
+        agent.context_compressor.threshold_tokens = 200
+
+        big_history = []
+        for i in range(20):
+            big_history.append({"role": "user", "content": f"Message {i} " + "x" * 100})
+            big_history.append({"role": "assistant", "content": f"Response {i} " + "y" * 100})
+
+        rewritten = [
+            {"role": m["role"], "content": f"{m['role']} summarized {i}"}
+            for i, m in enumerate(big_history + [{"role": "user", "content": "hello"}])
+        ]
+        assert len(rewritten) == len(big_history) + 1
+
+        ok_resp = _mock_response(content="After same-count preflight", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [ok_resp]
+
+        with (
+            patch.object(agent, "_compress_context") as mock_compress,
+            patch(
+                "agent.turn_context.estimate_request_tokens_rough",
+                side_effect=[500, 100, 100],
+            ),
+            patch(
+                "agent.conversation_loop.estimate_request_tokens_rough",
+                side_effect=[500, 100, 100],
+            ),
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            mock_compress.return_value = (rewritten, "new system prompt")
+            result = agent.run_conversation("hello", conversation_history=big_history)
+
+        mock_compress.assert_called_once()
+        assert result["completed"] is True
+        assert result["final_response"] == "After same-count preflight"
 
     def test_preflight_defers_when_recent_real_usage_fit(self, agent):
         """A noisy rough estimate should not re-compact a recently fitting request."""
