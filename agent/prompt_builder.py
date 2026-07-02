@@ -7,6 +7,8 @@ assemble pieces, then combines them with memory and ephemeral prompts.
 import json
 import logging
 import os
+import hashlib
+import re
 import threading
 import contextvars
 from collections import OrderedDict
@@ -1256,6 +1258,22 @@ _SKILLS_PROMPT_CACHE_MAX = 8
 _SKILLS_PROMPT_CACHE: OrderedDict[tuple, str] = OrderedDict()
 _SKILLS_PROMPT_CACHE_LOCK = threading.Lock()
 _SKILLS_SNAPSHOT_VERSION = 1
+_SKILLS_PROMPT_FINGERPRINT_RE = re.compile(
+    r"Skills snapshot fingerprint: sha256:([0-9a-f]{16,64})"
+)
+
+
+def extract_skills_system_prompt_fingerprint(prompt: str) -> Optional[str]:
+    """Return the embedded skills prompt fingerprint, if present."""
+    match = _SKILLS_PROMPT_FINGERPRINT_RE.search(prompt or "")
+    return match.group(1) if match else None
+
+
+def _skills_system_prompt_with_fingerprint(body: str) -> str:
+    if not body:
+        return body
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return "Skills snapshot fingerprint: sha256:{}\n{}".format(digest, body)
 
 
 def _skills_prompt_snapshot_path() -> Path:
@@ -1643,7 +1661,7 @@ def build_skills_system_prompt(
                 else:
                     index_lines.append(f"    - {name}")
 
-        result = (
+        result = _skills_system_prompt_with_fingerprint(
             "## Skills (mandatory)\n"
             "Before replying, scan the skills below. If a skill matches or is even partially relevant "
             "to your task, you MUST load it with skill_view(name) and follow its instructions. "
