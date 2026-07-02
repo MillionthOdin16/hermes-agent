@@ -760,6 +760,7 @@ def _run_review_in_thread(
                     quiet_mode=True,
                 )
             }
+            allowed_tools_text = ", ".join(sorted(review_whitelist))
             set_thread_tool_whitelist(
                 review_whitelist,
                 deny_msg_fmt=(
@@ -785,9 +786,13 @@ def _run_review_in_thread(
                 review_agent.run_conversation(
                     user_message=(
                         prompt
-                        + "\n\nYou can only call memory and skill "
-                        "management tools. Other tools will be denied "
-                        "at runtime — do not attempt them."
+                        + "\n\nAllowed tools: "
+                        + allowed_tools_text
+                        + "\n\nOnly use the allowed memory and skill "
+                        "management tools above. Do not call read_file, "
+                        "search_files, patch, write_file, terminal, process, "
+                        "web_search, execute_code, delegate_task, or any "
+                        "other tool; those are denied at runtime."
                     ),
                     conversation_history=_review_history,
                 )
