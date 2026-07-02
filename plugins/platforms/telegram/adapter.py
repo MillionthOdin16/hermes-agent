@@ -7057,7 +7057,12 @@ class TelegramAdapter(BasePlatformAdapter):
         self._enqueue_text_event(event)
 
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle incoming command messages."""
+        """Handle incoming command messages through the split-text queue.
+
+        Telegram can split long ``/command <args>`` payloads into multiple
+        updates. Queue commands with normal text chunks, then let the flush
+        path promote the reassembled payload back to ``COMMAND`` type.
+        """
         msg = self._effective_update_message(update)
         if not msg or not msg.text:
             return
@@ -7076,7 +7081,7 @@ class TelegramAdapter(BasePlatformAdapter):
         event.text = self._clean_bot_trigger_text(event.text)
         await self._cache_replied_media(msg, event)
         event = self._apply_telegram_group_observe_attribution(event)
-        await self.handle_message(event)
+        self._enqueue_text_event(event)
 
     async def _handle_location_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming location/venue pin messages."""
@@ -7163,9 +7168,14 @@ class TelegramAdapter(BasePlatformAdapter):
             event._last_chunk_len = chunk_len  # type: ignore[attr-defined]
             self._pending_text_batches[key] = event
         else:
-            # Append text from the follow-up chunk
+            # Append text from the follow-up chunk. When the pending batch is a
+            # command, remove a repeated @botname trigger from continuation
+            # chunks so it does not leak into the final argument string.
             if event.text:
-                existing.text = f"{existing.text}\n{event.text}" if existing.text else event.text
+                append_text = event.text
+                if existing.message_type == MessageType.COMMAND:
+                    append_text = self._clean_bot_trigger_text(append_text) or append_text
+                existing.text = f"{existing.text}\n{append_text}" if existing.text else append_text
             existing._last_chunk_len = chunk_len  # type: ignore[attr-defined]
             # Merge any media that might be attached
             if event.media_urls:
@@ -7218,9 +7228,13 @@ class TelegramAdapter(BasePlatformAdapter):
             if self._should_drop_delayed_delivery():
                 logger.debug("[Telegram] Dropping text batch flush after disconnect started")
                 return
+            # A reassembled split command must re-enter the gateway command
+            # path rather than the ordinary conversation path.
+            if event.text and event.text.startswith("/"):
+                event.message_type = MessageType.COMMAND
             logger.info(
-                "[Telegram] Flushing text batch %s (%d chars)",
-                key, len(event.text or ""),
+                "[Telegram] Flushing text batch %s (%d chars, type=%s)",
+                key, len(event.text or ""), event.message_type.name,
             )
             await self.handle_message(event)
         finally:
