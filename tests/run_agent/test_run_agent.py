@@ -6128,6 +6128,91 @@ class TestSystemPromptStability:
         # Empty string is falsy, so should fall through to fresh build
         assert "Hermes Agent" in agent._cached_system_prompt
 
+    def test_legacy_stored_skills_prompt_without_fingerprint_is_rebuilt(self, agent):
+        from agent.conversation_loop import _restore_or_build_system_prompt
+
+        stored = "prefix\n<available_skills>\n  dev:\n    - old\n</available_skills>"
+        mock_db = MagicMock()
+        mock_db.get_session.return_value = {"system_prompt": stored}
+        agent._session_db = mock_db
+        agent.valid_tool_names = {"skills_list", "skill_view", "skill_manage"}
+        agent._cached_system_prompt = None
+        agent._build_system_prompt = MagicMock(return_value="fresh prompt")
+
+        with (
+            patch("run_agent.get_toolset_for_tool", return_value="skills"),
+            patch("run_agent.build_skills_system_prompt", return_value="current skills prompt"),
+        ):
+            _restore_or_build_system_prompt(
+                agent,
+                None,
+                [{"role": "user", "content": "continue"}],
+            )
+
+        assert agent._cached_system_prompt == "fresh prompt"
+        agent._build_system_prompt.assert_called_once()
+        mock_db.update_system_prompt.assert_called_once_with(agent.session_id, "fresh prompt")
+
+    def test_changed_stored_skills_prompt_fingerprint_is_rebuilt(self, agent):
+        from agent.conversation_loop import _restore_or_build_system_prompt
+        from agent.prompt_builder import _skills_system_prompt_with_fingerprint
+
+        old_skills = _skills_system_prompt_with_fingerprint(
+            "## Skills\n<available_skills>\n  dev:\n    - old\n</available_skills>"
+        )
+        current_skills = _skills_system_prompt_with_fingerprint(
+            "## Skills\n<available_skills>\n  dev:\n    - new\n</available_skills>"
+        )
+        mock_db = MagicMock()
+        mock_db.get_session.return_value = {"system_prompt": "identity\n" + old_skills}
+        agent._session_db = mock_db
+        agent.valid_tool_names = {"skills_list", "skill_view", "skill_manage"}
+        agent._cached_system_prompt = None
+        agent._build_system_prompt = MagicMock(return_value="fresh prompt")
+
+        with (
+            patch("run_agent.get_toolset_for_tool", return_value="skills"),
+            patch("run_agent.build_skills_system_prompt", return_value=current_skills),
+        ):
+            _restore_or_build_system_prompt(
+                agent,
+                None,
+                [{"role": "user", "content": "continue"}],
+            )
+
+        assert agent._cached_system_prompt == "fresh prompt"
+        agent._build_system_prompt.assert_called_once()
+        mock_db.update_system_prompt.assert_called_once_with(agent.session_id, "fresh prompt")
+
+    def test_matching_stored_skills_prompt_fingerprint_is_reused(self, agent):
+        from agent.conversation_loop import _restore_or_build_system_prompt
+        from agent.prompt_builder import _skills_system_prompt_with_fingerprint
+
+        current_skills = _skills_system_prompt_with_fingerprint(
+            "## Skills\n<available_skills>\n  dev:\n    - current\n</available_skills>"
+        )
+        stored = "identity\n" + current_skills
+        mock_db = MagicMock()
+        mock_db.get_session.return_value = {"system_prompt": stored}
+        agent._session_db = mock_db
+        agent.valid_tool_names = {"skills_list", "skill_view", "skill_manage"}
+        agent._cached_system_prompt = None
+        agent._build_system_prompt = MagicMock(return_value="fresh prompt")
+
+        with (
+            patch("run_agent.get_toolset_for_tool", return_value="skills"),
+            patch("run_agent.build_skills_system_prompt", return_value=current_skills),
+        ):
+            _restore_or_build_system_prompt(
+                agent,
+                None,
+                [{"role": "user", "content": "continue"}],
+            )
+
+        assert agent._cached_system_prompt == stored
+        agent._build_system_prompt.assert_not_called()
+        mock_db.update_system_prompt.assert_not_called()
+
 class TestBudgetPressure:
     """Budget exhaustion grace call system."""
 
