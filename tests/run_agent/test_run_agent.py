@@ -4601,6 +4601,43 @@ class TestRunConversation:
         assert result["final_response"] == "All done"
         assert result["completed"] is True
 
+    def test_post_tool_dedupes_repeated_tool_outputs_before_next_request(self, agent):
+        """Repeated exact tool results should not be resent in full."""
+        self._setup_agent(agent)
+        agent.compression_enabled = True
+        agent.context_compressor.threshold_tokens = 999_999
+
+        duplicate = "same large output\n" + "x" * 5000
+        old_tool_call = {
+            "id": "old_call",
+            "type": "function",
+            "function": {"name": "web_search", "arguments": "{}"},
+        }
+        history = [
+            {"role": "user", "content": "previous search"},
+            {"role": "assistant", "content": "", "tool_calls": [old_tool_call]},
+            {"role": "tool", "content": duplicate, "tool_call_id": "old_call", "tool_name": "web_search"},
+            {"role": "assistant", "content": "previous result"},
+        ]
+        tc = _mock_tool_call(name="web_search", arguments="{}", call_id="new_call")
+        resp1 = _mock_response(content="", finish_reason="tool_calls", tool_calls=[tc])
+        resp2 = _mock_response(content="All done", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [resp1, resp2]
+
+        with (
+            patch("run_agent.handle_function_call", return_value=duplicate),
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("search again", conversation_history=history)
+
+        second_request = agent.client.chat.completions.create.call_args_list[1].kwargs["messages"]
+        tool_messages = [m for m in second_request if m.get("role") == "tool"]
+        assert sum(1 for m in tool_messages if m.get("content") == duplicate) == 1
+        assert result["final_response"] == "All done"
+        assert result["completed"] is True
+
     def test_glm_prompt_exceeds_max_length_triggers_compression(self, agent):
         """GLM/Z.AI uses 'Prompt exceeds max length' for context overflow."""
         self._setup_agent(agent)
