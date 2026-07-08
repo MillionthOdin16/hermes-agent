@@ -1,0 +1,3 @@
+## 2026-05-19 - Fast-path regex optimization for strip_think_blocks
+**Learning:** `strip_think_blocks` is called very frequently (e.g., per chunk when streaming tokens). It used to re-compile 11 complex regex patterns per call. Additionally, it did not have an early exit, meaning even regular text was evaluated by all the regexes.
+**Action:** When a function executing regex runs in a hot path (like streaming or processing many items), hoist `re.sub` patterns into module-level `re.compile()` instances. Also, introduce a fast-path early return (e.g., `if '<' not in content: return content`) to avoid expensive operations entirely when they aren't needed. This avoids massive overhead.
