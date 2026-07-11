@@ -1,0 +1,3 @@
+## 2026-07-11 - Nested Interactive Elements Accessibility
+**Learning:** When icon-only interactive elements (like a `<Button>`) are nested inside a wrapper link (`<a>` tag) that already provides a `title` or `aria-label`, screen readers may incorrectly announce or skip the inner element if it lacks its own `aria-label`. Furthermore, leaving the inner element in the tab sequence creates redundant tab stops, frustrating keyboard navigation.
+**Action:** Always add a corresponding `aria-label` to the innermost interactive element and explicitly remove it from the tab sequence with `tabIndex={-1}` to ensure a seamless accessibility experience.
