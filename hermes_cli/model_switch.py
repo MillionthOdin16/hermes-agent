@@ -1213,7 +1213,7 @@ def _resolve_alias_fallback(
     Falls back to ``("openrouter", "nous")`` only when no authenticated
     providers are supplied (backwards compat for non-interactive callers).
     """
-    providers = authenticated_providers or ("openrouter", "nous")
+    providers = authenticated_providers or ()
     for provider in providers:
         # AmbiguousAliasError propagates: the alias exists on this provider,
         # the user just has to choose — trying the next provider instead
