@@ -680,38 +680,27 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     """
     Find a skill by name across all skill directories.
 
-    Searches the local skills dir (~/.hermes/skills/) first, then any
-    external dirs configured via skills.external_dirs.  Returns
-    {"path": Path} or None.
-
-    Accepts both the bare directory name (``axolotl``) and the categorized
-    relative path (``mlops/axolotl``) — the same two forms skill_view
-    resolves, and the form skill_view's ambiguity hint explicitly tells
-    the caller to use. The bare-name match compares the skill's own
-    directory name (``parent.name``), so bare lookups keep working for
-    category-nested skills.
+    Searches using frontmatter name index (authoritative) first, then
+    falls back to directory-name matching for skills with empty frontmatter.
+    This mirrors skill_view's resolution logic so collision detection is
+    consistent with skill loading.
     """
     from agent.skill_utils import get_all_skills_dirs, is_excluded_skill_path
+    from tools.skills_tool import _build_frontmatter_index
 
-    # Resolve the local skills root once — the categorized form matches the
-    # skill dir's path RELATIVE to that root. Only computed lazily (bare-name
-    # lookups never need it) and never for external dirs (relative_to raises).
-    _resolved_root: Optional[Path] = None
+    all_dirs = get_all_skills_dirs()
 
-    def _local_root() -> Path:
-        nonlocal _resolved_root
-        if _resolved_root is None:
-            try:
-                _resolved_root = _skills_dir().resolve()
-            except OSError:
-                logger.debug(
-                    "skills dir resolve failed; categorized lookups fall back to the unresolved path",
-                    exc_info=True,
-                )
-                _resolved_root = _skills_dir()
-        return _resolved_root
+    # Try frontmatter name index first (authoritative for named skills)
+    fm_index = _build_frontmatter_index(all_dirs)
+    fm_candidates = fm_index.get(name, [])
+    if fm_candidates:
+        # Return first match — this is collision detection, not semantic disambiguation
+        sd, smd, fm = fm_candidates[0]
+        return {"path": smd.parent}
 
-    for skills_dir in get_all_skills_dirs():
+    # Fall back to directory-name matching (handles empty fm name skills)
+    for skills_dir in all_dirs:
+
         if not skills_dir.exists():
             continue
         for skill_md in skills_dir.rglob("SKILL.md"):
@@ -721,15 +710,7 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
             # machinery entirely on the common match.
             if skill_md.parent.name == name:
                 return {"path": skill_md.parent}
-            # Categorized form (``category/skill-name``): compare the skill
-            # dir's POSIX relative path so the lookup works on Windows too.
-            if "/" in name or "\\" in name:
-                try:
-                    rel = skill_md.parent.resolve().relative_to(_local_root())
-                except ValueError:
-                    continue
-                if rel.as_posix() == name:
-                    return {"path": skill_md.parent}
+
     return None
 
 
