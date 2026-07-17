@@ -639,6 +639,34 @@ def repair_message_sequence_with_cursor(agent, messages: List[Dict]) -> int:
 
 
 
+_THINK_RE = re.compile(r'<think>.*?</think>', flags=re.DOTALL | re.IGNORECASE)
+_THINKING_RE = re.compile(r'<thinking>.*?</thinking>', flags=re.DOTALL | re.IGNORECASE)
+_REASONING_RE = re.compile(r'<reasoning>.*?</reasoning>', flags=re.DOTALL | re.IGNORECASE)
+_REASONING_SCRATCHPAD_RE = re.compile(r'<REASONING_SCRATCHPAD>.*?</REASONING_SCRATCHPAD>', flags=re.DOTALL | re.IGNORECASE)
+_THOUGHT_RE = re.compile(r'<thought>.*?</thought>', flags=re.DOTALL | re.IGNORECASE)
+_RUNTIME_TC_RES = [
+    re.compile(rf'<{_tc_name}\b[^>]*>.*?</{_tc_name}>', flags=re.DOTALL | re.IGNORECASE)
+    for _tc_name in ("tool_call", "tool_calls", "tool_result", "function_call", "function_calls")
+]
+_RUNTIME_FUNC_RE = re.compile(
+    r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
+    r'<function\b[^>]*\bname\s*=[^>]*>'
+    r'(?:(?:(?!</function>).)*)</function>',
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_RUNTIME_UNTERM_THINK_RE = re.compile(
+    r'(?:^|\n)[ \t]*<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)\b[^>]*>.*$',
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_RUNTIME_STRAY_THINK_RE = re.compile(
+    r'</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\s*',
+    flags=re.IGNORECASE,
+)
+_RUNTIME_STRAY_TC_RE = re.compile(
+    r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
+    flags=re.IGNORECASE,
+)
+
 def strip_think_blocks(agent, content: str) -> str:
     """Remove reasoning/thinking blocks from content, returning only visible text.
 
@@ -672,65 +700,40 @@ def strip_think_blocks(agent, content: str) -> str:
     """
     if not content:
         return ""
+    if '<' not in content:
+        return content
+
     # 1. Closed tag pairs — case-insensitive for all variants so
     #    mixed-case tags (<THINK>, <Thinking>) don't slip through to
     #    the unterminated-tag pass and take trailing content with them.
-    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<thinking>.*?</thinking>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<reasoning>.*?</reasoning>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<REASONING_SCRATCHPAD>.*?</REASONING_SCRATCHPAD>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<thought>.*?</thought>', '', content, flags=re.DOTALL | re.IGNORECASE)
+    content = _THINK_RE.sub('', content)
+    content = _THINKING_RE.sub('', content)
+    content = _REASONING_RE.sub('', content)
+    content = _REASONING_SCRATCHPAD_RE.sub('', content)
+    content = _THOUGHT_RE.sub('', content)
     # 1b. Tool-call XML blocks (openclaw/openclaw#67318). Handle the
     #     generic tag names first — they have no attribute gating since
     #     a literal <tool_call> in prose is already vanishingly rare.
-    for _tc_name in ("tool_call", "tool_calls", "tool_result",
-                      "function_call", "function_calls"):
-        content = re.sub(
-            rf'<{_tc_name}\b[^>]*>.*?</{_tc_name}>',
-            '',
-            content,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+    for r in _RUNTIME_TC_RES:
+        content = r.sub('', content)
     # 1c. <function name="...">...</function> — Gemma-style standalone
     #     tool call. Only strip when the tag sits at a block boundary
     #     (start of text, after a newline, or after sentence-ending
     #     punctuation) AND carries a name="..." attribute. This keeps
     #     prose mentions like "Use <function> to declare" safe.
-    content = re.sub(
-        r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
-        r'<function\b[^>]*\bname\s*=[^>]*>'
-        r'(?:(?:(?!</function>).)*)</function>',
-        '',
-        content,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
+    content = _RUNTIME_FUNC_RE.sub('', content)
     # 2. Unterminated reasoning block — open tag at a block boundary
     #    (start of text, or after a newline) with no matching close.
     #    Strip from the tag to end of string.  Fixes #8878 / #9568
     #    (MiniMax M2.7 leaking raw reasoning into assistant content).
-    content = re.sub(
-        r'(?:^|\n)[ \t]*<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)\b[^>]*>.*$',
-        '',
-        content,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
+    content = _RUNTIME_UNTERM_THINK_RE.sub('', content)
     # 3. Stray orphan open/close tags that slipped through.
-    content = re.sub(
-        r'</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\s*',
-        '',
-        content,
-        flags=re.IGNORECASE,
-    )
+    content = _RUNTIME_STRAY_THINK_RE.sub('', content)
     # 3b. Stray tool-call closers. (We do NOT strip bare <function> or
     #     unterminated <function name="..."> because a truncated tail
     #     during streaming may still be valuable to the user; matches
     #     OpenClaw's intentional asymmetry.)
-    content = re.sub(
-        r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
-        '',
-        content,
-        flags=re.IGNORECASE,
-    )
+    content = _RUNTIME_STRAY_TC_RE.sub('', content)
     return content
 
 
