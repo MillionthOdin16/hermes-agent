@@ -1831,6 +1831,7 @@ def init_agent(
     if compression_max_attempts < 1:
         compression_max_attempts = 3
     compression_max_attempts = min(compression_max_attempts, 10)
+    compression_threshold_tokens_cap = int(_compression_cfg.get("threshold_tokens_cap", 0))
     # protect_first_n is the number of non-system messages to protect at
     # the head, in addition to the system prompt (which is always
     # implicitly protected by the compressor).  Floor at 0 — a value of
@@ -2305,6 +2306,7 @@ def init_agent(
             max_tokens=agent.max_tokens,
             model_thresholds=compression_model_thresholds,
             threshold_tokens_cap=compression_threshold_tokens,
+            threshold_tokens_cap=compression_threshold_tokens_cap,
         )
     _bind_session_state = getattr(agent.context_compressor, "bind_session_state", None)
     if callable(_bind_session_state):
