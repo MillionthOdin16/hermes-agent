@@ -64,7 +64,7 @@ class TestTextBatching:
         adapter = _make_adapter()
         event = _make_event("hello world")
 
-        adapter._enqueue_text_event(event)
+        await adapter._enqueue_text_event(event)
 
         # Not dispatched yet
         adapter.handle_message.assert_not_called()
@@ -81,9 +81,9 @@ class TestTextBatching:
         """Two rapid messages from the same chat should be merged."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("This is part one of a long"))
+        await adapter._enqueue_text_event(_make_event("This is part one of a long"))
         await asyncio.sleep(0.02)  # small gap, within batch window
-        adapter._enqueue_text_event(_make_event("message that was split by Telegram."))
+        await adapter._enqueue_text_event(_make_event("message that was split by Telegram."))
 
         # Not dispatched yet (timer restarted)
         adapter.handle_message.assert_not_called()
@@ -101,11 +101,11 @@ class TestTextBatching:
         """Three rapid messages should all merge."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("chunk 1"))
+        await adapter._enqueue_text_event(_make_event("chunk 1"))
         await asyncio.sleep(0.02)
-        adapter._enqueue_text_event(_make_event("chunk 2"))
+        await adapter._enqueue_text_event(_make_event("chunk 2"))
         await asyncio.sleep(0.02)
-        adapter._enqueue_text_event(_make_event("chunk 3"))
+        await adapter._enqueue_text_event(_make_event("chunk 3"))
 
         await asyncio.sleep(0.2)
 
@@ -120,8 +120,8 @@ class TestTextBatching:
         """Messages from different chats should be separate batches."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("from user A", chat_id="111"))
-        adapter._enqueue_text_event(_make_event("from user B", chat_id="222"))
+        await adapter._enqueue_text_event(_make_event("from user A", chat_id="111"))
+        await adapter._enqueue_text_event(_make_event("from user B", chat_id="222"))
 
         await asyncio.sleep(0.2)
 
@@ -132,7 +132,7 @@ class TestTextBatching:
         """After flushing, internal state should be clean."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("test"))
+        await adapter._enqueue_text_event(_make_event("test"))
         await asyncio.sleep(0.2)
 
         assert len(adapter._pending_text_batches) == 0
@@ -157,7 +157,7 @@ class TestTextBatching:
             ),
         )
 
-        adapter._enqueue_text_event(event)
+        await adapter._enqueue_text_event(event)
 
         def _key(thread_id: str) -> str:
             return build_session_key(
@@ -182,11 +182,43 @@ class TestTextBatching:
         assert dispatched.source.thread_id == "222"
 
     @pytest.mark.asyncio
+    async def test_dm_topic_batching_offloads_topic_recovery_before_keying(self, monkeypatch):
+        """Topic recovery may touch SessionDB, so batching must keep it off-loop."""
+        adapter = _make_adapter()
+        adapter.set_topic_recovery_fn(
+            lambda source: "222" if str(source.thread_id or "") == "1" else None
+        )
+        event = MessageEvent(
+            text="hello from DM topic",
+            message_type=MessageType.TEXT,
+            source=SessionSource(
+                platform=Platform.TELEGRAM,
+                chat_id="12345",
+                chat_type="dm",
+                user_id="user-1",
+                thread_id="1",
+            ),
+        )
+        seen = []
+        real_to_thread = asyncio.to_thread
+
+        async def _spy(func, *args, **kwargs):
+            seen.append(getattr(func, "__name__", repr(func)))
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", _spy)
+
+        await adapter._enqueue_text_event(event)
+
+        assert "_apply_topic_recovery" in seen
+        assert event.source.thread_id == "222"
+
+    @pytest.mark.asyncio
     async def test_disconnect_cancels_pending_text_batch_without_dispatch(self):
         """Disconnect should not let buffered text flush into a stale run."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("stale text"))
+        await adapter._enqueue_text_event(_make_event("stale text"))
         await adapter.disconnect()
         await asyncio.sleep(0.2)
 
@@ -199,7 +231,7 @@ class TestTextBatching:
         """A pending text flush should drop its event if teardown wins the race."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("stale text"))
+        await adapter._enqueue_text_event(_make_event("stale text"))
         adapter._mark_disconnected()
         await asyncio.sleep(0.2)
 
@@ -213,7 +245,7 @@ class TestTextBatching:
         adapter = _make_adapter()
         adapter._mark_disconnected()
 
-        adapter._enqueue_text_event(_make_event("late text"))
+        await adapter._enqueue_text_event(_make_event("late text"))
         await asyncio.sleep(0.2)
 
         adapter.handle_message.assert_not_called()
