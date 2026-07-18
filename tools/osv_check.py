@@ -150,6 +150,9 @@ def _query_osv(
     if version:
         payload["version"] = version
 
+    if not _OSV_ENDPOINT.startswith(("http://", "https://")):
+        raise ValueError("OSV_ENDPOINT must be an HTTP or HTTPS URL")
+
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         _OSV_ENDPOINT,
@@ -161,7 +164,7 @@ def _query_osv(
         method="POST",
     )
 
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310
         result = json.loads(resp.read())
 
     vulns = result.get("vulns", [])
