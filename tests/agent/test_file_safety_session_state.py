@@ -65,7 +65,10 @@ def test_write_file_tool_preserves_existing_session_snapshot(fake_homes, monkeyp
     target = profile / "sessions" / "session_abc.json"
     target.parent.mkdir(parents=True)
     target.write_text("original transcript", encoding="utf-8")
-    monkeypatch.setattr(ft, "_get_live_tracking_cwd", lambda task_id="default": None)
+    if hasattr(ft, "_registered_task_cwd_override"):
+        monkeypatch.setattr(ft, "_registered_task_cwd_override", lambda task_id="default": None)
+    elif hasattr(ft, "_get_live_tracking_cwd"):
+        monkeypatch.setattr(ft, "_get_live_tracking_cwd", lambda task_id="default": None)
 
     result = json.loads(ft.write_file_tool(str(target), "tampered"))
 
