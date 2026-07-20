@@ -28,7 +28,7 @@ def hermes_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(home))
     yield home
     # Cleanup: drop the cached file_ops and active environment so the
-    # next test sees a fresh state.  Without this, _get_live_tracking_cwd
+    # next test sees a fresh state.  Without this, _authoritative_workspace_root
     # returns the stale cwd from this test's ops and breaks tests like
     # test_resolve_path that rely on TERMINAL_CWD env var.
     try:
