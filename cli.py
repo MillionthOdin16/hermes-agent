@@ -2396,39 +2396,44 @@ def _rich_text_from_ansi(text: str) -> _RichText:
     return _RichText.from_ansi(text or "")
 
 
-def _strip_markdown_syntax(text: str) -> str:
-    """Best-effort markdown marker removal for plain-text display."""
-    plain = _rich_text_from_ansi(text or "").plain
+_STRIP_MARKDOWN_REGEXES = [
     # Avoid stripping cron-style expressions like "* * * * *" as if they were
     # Markdown horizontal rules. CommonMark treats three or more "*" as an HR,
     # but in Hermes output it's common to display cron schedules verbatim.
     #
     # Keep the behavior for "-" / "_" HR markers, and only strip "*" HR lines
     # when there are exactly 3 asterisks (with optional whitespace).
-    plain = re.sub(r"^\s{0,3}(?:[-_]\s*){3,}$", "", plain, flags=re.MULTILINE)
-    plain = re.sub(r"^\s{0,3}(?:\*\s*){3}\s*$", "", plain, flags=re.MULTILINE)
-    plain = re.sub(r"^\s{0,3}#{1,6}\s+", "", plain, flags=re.MULTILINE)
+    (re.compile(r"^\s{0,3}(?:[-_]\s*){3,}$", flags=re.MULTILINE), ""),
+    (re.compile(r"^\s{0,3}(?:\*\s*){3}\s*$", flags=re.MULTILINE), ""),
+    (re.compile(r"^\s{0,3}#{1,6}\s+", flags=re.MULTILINE), ""),
     # Preserve blockquotes, lists, and checkboxes because they carry structure.
-    plain = re.sub(r"(```+|~~~+)", "", plain)
-    plain = re.sub(r"`([^`]*)`", r"\1", plain)
-    plain = re.sub(r"!\[([^\]]*)\]\([^\)]*\)", r"\1", plain)
-    plain = re.sub(r"\[([^\]]+)\]\([^\)]*\)", r"\1", plain)
-    plain = re.sub(r"\*\*\*([^*]+)\*\*\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)___([^_]+)___(?!\w)", r"\1", plain)
-    plain = re.sub(r"\*\*([^*]+)\*\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)__([^_]+)__(?!\w)", r"\1", plain)
+    (re.compile(r"(```+|~~~+)"), ""),
+    (re.compile(r"`([^`]*)`"), r"\1"),
+    (re.compile(r"!\[([^\]]*)\]\([^\)]*\)"), r"\1"),
+    (re.compile(r"\[([^\]]+)\]\([^\)]*\)"), r"\1"),
+    (re.compile(r"\*\*\*([^*]+)\*\*\*"), r"\1"),
+    (re.compile(r"(?<!\w)___([^_]+)___(?!\w)"), r"\1"),
+    (re.compile(r"\*\*([^*]+)\*\*"), r"\1"),
+    (re.compile(r"(?<!\w)__([^_]+)__(?!\w)"), r"\1"),
     # Only strip `*emphasis*` markers when the inner text is non-whitespace.
     # This avoids corrupting cron expressions like "* * * * *".
-    plain = re.sub(r"\*([^\s*][^*]*?[^\s*])\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", plain)
-    plain = re.sub(r"~~([^~]+)~~", r"\1", plain)
-    plain = re.sub(r"\n{3,}", "\n\n", plain)
+    (re.compile(r"\*([^\s*][^*]*?[^\s*])\*"), r"\1"),
+    (re.compile(r"(?<!\w)_([^_]+)_(?!\w)"), r"\1"),
+    (re.compile(r"~~([^~]+)~~"), r"\1"),
+    (re.compile(r"\n{3,}"), "\n\n"),
+]
+
+
+def _strip_markdown_syntax(text: str) -> str:
+    """Best-effort markdown marker removal for plain-text display."""
+    plain = _rich_text_from_ansi(text or "").plain
+    for pattern, repl in _STRIP_MARKDOWN_REGEXES:
+        plain = pattern.sub(repl, plain)
     return plain.strip("\n")
 
 
-_WINDOWS_PATH_WITH_DOT_SEGMENT_RE = re.compile(
-    r"(?i)(?:\b[a-z]:\\|\\\\)[^\s`]*\\\.[^\s`]*"
-)
+_WINDOWS_PATH_WITH_DOT_SEGMENT_RE = re.compile(r"(?i)(?:\b[a-z]:\\|\\\\)[^\s`]*\\\.[^\s`]*")
+
 
 
 def _preserve_windows_dot_segments_for_markdown(text: str) -> str:
