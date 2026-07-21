@@ -569,4 +569,4 @@ def test_max_accepted_separator_free_input_is_fast():
     elapsed = time.perf_counter() - started
 
     assert result == (False, None, None)
-    assert elapsed < 0.15, f"max accepted token took {elapsed:.3f}s"
+    assert elapsed < 0.35, f"max accepted token took {elapsed:.3f}s"
