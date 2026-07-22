@@ -1364,11 +1364,14 @@ class ContextCompressor(ContextEngine):
         # passes the new value explicitly. (#43547)
         if max_tokens is not None:
             self.max_tokens = self._coerce_max_tokens(max_tokens)
+        # _compute_threshold_tokens takes int default 0; pass through 0 when
+        # the coerced cap is None ("no cap configured") to avoid the
+        # None > 0 TypeError in the helper.
         self.threshold_tokens = self._compute_threshold_tokens(
             context_length,
             self.threshold_percent,
             self.max_tokens,
-            self.threshold_tokens_cap,
+            self.threshold_tokens_cap if self.threshold_tokens_cap is not None else 0,
         )
         # Re-apply the absolute token cap so it survives model switches
         # and fallback activations. The cap is a first-class config value
@@ -1621,7 +1624,7 @@ class ContextCompressor(ContextEngine):
             self.context_length,
             threshold_percent,
             self.max_tokens,
-            self.threshold_tokens_cap,
+            self.threshold_tokens_cap if self.threshold_tokens_cap is not None else 0,
         )
         # Apply absolute token cap (compression.threshold_tokens) — takes
         # the lower of the ratio-based threshold and the cap.
@@ -2389,6 +2392,49 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
         if len(summary) > _FALLBACK_SUMMARY_MAX_CHARS:
             summary = summary[: _FALLBACK_SUMMARY_MAX_CHARS - 42].rstrip() + "\n...[fallback summary truncated]"
         return summary
+
+    def _build_continuity_anchor(self, messages: List[Dict[str, Any]]) -> str:
+        """Build a deterministic anchor from protected tail messages."""
+        if not messages:
+            return ""
+
+        user_items: list[str] = []
+        tool_items: list[str] = []
+        file_items: list[str] = []
+
+        def _compact(value: Any, limit: int = 420) -> str:
+            text = redact_sensitive_text(_content_text_for_contains(value))
+            text = re.sub(r"\s+", " ", text).strip()
+            if len(text) > limit:
+                text = text[: limit - 15].rstrip() + " ...[truncated]"
+            return text
+
+        for msg in messages[-8:]:
+            role = msg.get("role")
+            text = _compact(msg.get("content"))
+            _collect_path_mentions(text, file_items)
+            if role == "user" and text:
+                _dedupe_append(user_items, text, limit=4)
+            elif role == "tool" and text:
+                tool_id = str(msg.get("tool_call_id") or "tool")
+                _dedupe_append(tool_items, f"{tool_id}: {text}", limit=4)
+
+        if not user_items and not tool_items and not file_items:
+            return ""
+
+        def _bullets(items: list[str]) -> str:
+            return "\n".join(f"- {item}" for item in items) if items else "- None."
+
+        return (
+            "## Current Continuity Anchor\n"
+            "Recent protected-tail context that must survive compaction:\n\n"
+            "### Recent User Requests\n"
+            f"{_bullets(user_items)}\n\n"
+            "### Recent Tool Evidence\n"
+            f"{_bullets(tool_items)}\n\n"
+            "### Referenced Files\n"
+            f"{_bullets(file_items[:8])}"
+        )
 
     def _fallback_to_main_for_compression(self, e: Exception, reason: str) -> None:
         """Switch from a separate ``summary_model`` back to the main model.
@@ -4382,6 +4428,8 @@ This compaction should PRIORITISE preserving all information related to the focu
             if stripped is not None:
                 compressed.append(stripped)
 
+        summary_from_llm = bool(summary)
+
         # If LLM summary failed, insert a deterministic fallback so the model
         # gets at least locally recoverable continuity anchors instead of a
         # content-free "N messages were removed" marker.
@@ -4398,6 +4446,9 @@ This compaction should PRIORITISE preserving all information related to the focu
                 reason=self._last_summary_error,
             )
 
+        continuity_anchor = self._build_continuity_anchor(messages[compress_end:])
+        if summary_from_llm and continuity_anchor and "## Current Continuity Anchor" not in summary:
+            summary = summary.rstrip() + "\n\n" + continuity_anchor
         tail_messages: List[Dict[str, Any]] = []
         # Start at tail_start (not compress_end): the restart-decay scan may
         # have advanced it past a summary that sat beyond compress_end

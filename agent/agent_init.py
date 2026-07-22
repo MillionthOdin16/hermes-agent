@@ -2305,7 +2305,6 @@ def init_agent(
             abort_on_summary_failure=compression_abort_on_summary_failure,
             max_tokens=agent.max_tokens,
             model_thresholds=compression_model_thresholds,
-            threshold_tokens_cap=compression_threshold_tokens,
             threshold_tokens_cap=compression_threshold_tokens_cap,
         )
     _bind_session_state = getattr(agent.context_compressor, "bind_session_state", None)
