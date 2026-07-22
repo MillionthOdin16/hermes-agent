@@ -1365,7 +1365,10 @@ class ContextCompressor(ContextEngine):
         if max_tokens is not None:
             self.max_tokens = self._coerce_max_tokens(max_tokens)
         self.threshold_tokens = self._compute_threshold_tokens(
-            context_length, self.threshold_percent, self.max_tokens,
+            context_length,
+            self.threshold_percent,
+            self.max_tokens,
+            self.threshold_tokens_cap,
         )
         # Re-apply the absolute token cap so it survives model switches
         # and fallback activations. The cap is a first-class config value
@@ -1483,7 +1486,10 @@ class ContextCompressor(ContextEngine):
 
     @staticmethod
     def _compute_threshold_tokens(
-        context_length: int, threshold_percent: float, max_tokens: int | None = None,
+        context_length: int,
+        threshold_percent: float,
+        max_tokens: int | None = None,
+        threshold_tokens_cap: int = 0,
     ) -> int:
         """Compute the compaction trigger threshold in tokens.
 
@@ -1513,6 +1519,8 @@ class ContextCompressor(ContextEngine):
         if effective_window <= 0:
             effective_window = context_length
         pct_value = int(effective_window * threshold_percent)
+        if threshold_tokens_cap > 0:
+            pct_value = min(pct_value, threshold_tokens_cap)
         floored = max(pct_value, MINIMUM_CONTEXT_LENGTH)
         # If flooring pushed the threshold to/over the effective window it can
         # never be reached. Trigger at 85% of the effective input budget so a
@@ -1537,9 +1545,9 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        threshold_tokens_cap: int = 0,
         max_tokens: int | None = None,
         model_thresholds: dict[str, float] | None = None,
-        threshold_tokens_cap: Any = None,
     ):
         self.model = model
         self.base_url = base_url
@@ -1610,7 +1618,10 @@ class ContextCompressor(ContextEngine):
         # guards the degenerate case where the floor would equal/exceed the
         # window (small models), so auto-compression can still fire (#14690).
         self.threshold_tokens = self._compute_threshold_tokens(
-            self.context_length, threshold_percent, self.max_tokens,
+            self.context_length,
+            threshold_percent,
+            self.max_tokens,
+            self.threshold_tokens_cap,
         )
         # Apply absolute token cap (compression.threshold_tokens) — takes
         # the lower of the ratio-based threshold and the cap.
