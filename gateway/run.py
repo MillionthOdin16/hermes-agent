@@ -13445,7 +13445,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # session_entry so transcript writes below go to the right session.
             if agent_result.get("session_id") and agent_result["session_id"] != session_entry.session_id:
                 if session_entry.session_id == _run_start_session_id:
-                    self._persist_gateway_session_rollover(
+                    await asyncio.to_thread(
+                        self._persist_gateway_session_rollover,
                         session_key=session_key,
                         source=source,
                         session_entry=session_entry,
@@ -15325,7 +15326,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 # into the NEW session so the original history stays searchable.
                 new_session_id = tmp_agent.session_id
                 if new_session_id != session_entry.session_id:
-                    self._persist_gateway_session_rollover(
+                    await asyncio.to_thread(
+                        self._persist_gateway_session_rollover,
                         session_key=session_key,
                         source=source,
                         session_entry=session_entry,
@@ -21710,7 +21712,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     and self._session_db is not None
                 ):
                     try:
-                        _binding = self._session_db.get_telegram_topic_binding_by_session(
+                        # run_sync is off-loop (executor); sync DB is fine.
+                        _binding = self._session_db._db.get_telegram_topic_binding_by_session(
                             session_id=agent.session_id,
                         )
                         if _binding and _binding.get("thread_id"):

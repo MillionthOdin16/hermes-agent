@@ -124,9 +124,9 @@ _GATEWAY_FILES = ("gateway/run.py", "gateway/slash_commands.py")
 #   - SessionDB.sanitize_title: pure @staticmethod string cleaning, no DB.
 #   - self._session_db._db.<x>: the sync escape, allowed ONLY where the call is
 #     provably off the event loop — construction (__init__, before the loop
-#     serves) and the run_sync closure (executed in a thread-pool executor).
-#     Three such sites today; a fourth must be justified and this count bumped.
-_ALLOWED_SYNC_DB_ESCAPES = 3
+#     serves) and run_sync closures (executed in a thread-pool executor).
+#     Four such sites today; a fifth must be justified and this count bumped.
+_ALLOWED_SYNC_DB_ESCAPES = 4
 
 # Sync helpers that touch SessionDB but are NEVER invoked bare on the loop:
 # every loop-side call wraps them in ``asyncio.to_thread(...)`` and the only
@@ -145,6 +145,7 @@ _OFFLOADED_SYNC_HELPERS = frozenset({
     "_telegram_topic_new_header",
     "_schedule_telegram_topic_title_rename",
     "_apply_topic_recovery",
+    "_persist_gateway_session_rollover",
 })
 
 
