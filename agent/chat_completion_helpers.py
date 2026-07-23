@@ -45,6 +45,8 @@ from utils import base_url_host_matches, base_url_hostname, env_float, env_int
 logger = logging.getLogger(__name__)
 _OPENROUTER_PROVIDER_SORT_VALUES = {"throughput", "latency", "price"}
 
+_THINK_BLOCK_RE_LOCAL = re.compile(r'<think>.*?</think>\s*', flags=re.DOTALL)
+
 # When the fallback chain is fully exhausted on a non-rate-limit failure
 # (e.g. every provider returns a non-retryable client error like HTTP 400),
 # arm a short cooldown so the NEXT turn's restore_primary_runtime stays gated
@@ -2093,7 +2095,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
 
         if final_response:
             if "<think>" in final_response:
-                final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
+                final_response = _THINK_BLOCK_RE_LOCAL.sub('', final_response).strip()
             if final_response:
                 messages.append({"role": "assistant", "content": final_response})
             else:
@@ -2136,7 +2138,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
 
             if final_response:
                 if "<think>" in final_response:
-                    final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
+                    final_response = _THINK_BLOCK_RE_LOCAL.sub('', final_response).strip()
                 if final_response:
                     messages.append({"role": "assistant", "content": final_response})
                 else:
