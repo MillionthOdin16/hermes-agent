@@ -219,12 +219,11 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                       href={p.docs_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex"
+                      className="inline-flex rounded-md p-2 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                       title={`Open ${p.name} docs`}
+                      aria-label={`Open ${p.name} documentation`}
                     >
-                      <Button ghost size="icon">
-                        <ExternalLink />
-                      </Button>
+                      <ExternalLink className="h-4 w-4" />
                     </a>
                   )}
                   {!p.status.logged_in && p.flow !== "external" && (
