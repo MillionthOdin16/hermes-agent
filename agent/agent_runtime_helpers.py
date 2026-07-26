@@ -43,6 +43,59 @@ from utils import base_url_host_matches, base_url_hostname, env_var_enabled, ato
 
 logger = logging.getLogger(__name__)
 
+# Pre-compiled regexes for think block removal performance optimization.
+# 1. Closed tag pairs — case-insensitive for all variants so
+#    mixed-case tags (<THINK>, <Thinking>) don't slip through to
+#    the unterminated-tag pass and take trailing content with them.
+_RE_CLOSED_THINK_TAGS = re.compile(
+    r'<(think|thinking|reasoning|REASONING_SCRATCHPAD|thought)>.*?</\1>',
+    flags=re.DOTALL | re.IGNORECASE
+)
+
+# 1b. Tool-call XML blocks (openclaw/openclaw#67318). Handle the
+#     generic tag names first — they have no attribute gating since
+#     a literal <tool_call> in prose is already vanishingly rare.
+_RE_CLOSED_TOOL_TAGS = re.compile(
+    r'<(tool_call|tool_calls|tool_result|function_call|function_calls)\b[^>]*>.*?</\1>',
+    flags=re.DOTALL | re.IGNORECASE
+)
+
+# 1c. <function name="...">...</function> — Gemma-style standalone
+#     tool call. Only strip when the tag sits at a block boundary
+#     (start of text, after a newline, or after sentence-ending
+#     punctuation) AND carries a name="..." attribute. This keeps
+#     prose mentions like "Use <function> to declare" safe.
+_RE_GEMMA_FUNCTION_TAG = re.compile(
+    r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
+    r'<function\b[^>]*\bname\s*=[^>]*>'
+    r'(?:(?:(?!</function>).)*)</function>',
+    flags=re.DOTALL | re.IGNORECASE
+)
+
+# 2. Unterminated reasoning block — open tag at a block boundary
+#    (start of text, or after a newline) with no matching close.
+#    Strip from the tag to end of string.  Fixes #8878 / #9568
+#    (MiniMax M2.7 leaking raw reasoning into assistant content).
+_RE_UNTERMINATED_THINK_TAGS = re.compile(
+    r'(?:^|\n)[ \t]*<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)\b[^>]*>.*$',
+    flags=re.DOTALL | re.IGNORECASE
+)
+
+# 3. Stray orphan open/close tags that slipped through.
+_RE_STRAY_THINK_TAGS = re.compile(
+    r'</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\s*',
+    flags=re.IGNORECASE
+)
+
+# 3b. Stray tool-call closers. (We do NOT strip bare <function> or
+#     unterminated <function name="..."> because a truncated tail
+#     during streaming may still be valuable to the user; matches
+#     OpenClaw's intentional asymmetry.)
+_RE_STRAY_TOOL_TAGS = re.compile(
+    r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
+    flags=re.IGNORECASE
+)
+
 
 # Max consecutive successful credential-pool token refreshes of the SAME entry
 # on a persistent auth failure before we give up and let the fallback chain
@@ -787,65 +840,18 @@ def strip_think_blocks(agent, content: str) -> str:
             content = str(content)
         if not content:
             return ""
-    # 1. Closed tag pairs — case-insensitive for all variants so
-    #    mixed-case tags (<THINK>, <Thinking>) don't slip through to
-    #    the unterminated-tag pass and take trailing content with them.
-    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<thinking>.*?</thinking>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<reasoning>.*?</reasoning>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<REASONING_SCRATCHPAD>.*?</REASONING_SCRATCHPAD>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r'<thought>.*?</thought>', '', content, flags=re.DOTALL | re.IGNORECASE)
-    # 1b. Tool-call XML blocks (openclaw/openclaw#67318). Handle the
-    #     generic tag names first — they have no attribute gating since
-    #     a literal <tool_call> in prose is already vanishingly rare.
-    for _tc_name in ("tool_call", "tool_calls", "tool_result",
-                      "function_call", "function_calls"):
-        content = re.sub(
-            rf'<{_tc_name}\b[^>]*>.*?</{_tc_name}>',
-            '',
-            content,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-    # 1c. <function name="...">...</function> — Gemma-style standalone
-    #     tool call. Only strip when the tag sits at a block boundary
-    #     (start of text, after a newline, or after sentence-ending
-    #     punctuation) AND carries a name="..." attribute. This keeps
-    #     prose mentions like "Use <function> to declare" safe.
-    content = re.sub(
-        r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
-        r'<function\b[^>]*\bname\s*=[^>]*>'
-        r'(?:(?:(?!</function>).)*)</function>',
-        '',
-        content,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    # 2. Unterminated reasoning block — open tag at a block boundary
-    #    (start of text, or after a newline) with no matching close.
-    #    Strip from the tag to end of string.  Fixes #8878 / #9568
-    #    (MiniMax M2.7 leaking raw reasoning into assistant content).
-    content = re.sub(
-        r'(?:^|\n)[ \t]*<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)\b[^>]*>.*$',
-        '',
-        content,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    # 3. Stray orphan open/close tags that slipped through.
-    content = re.sub(
-        r'</?(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>\s*',
-        '',
-        content,
-        flags=re.IGNORECASE,
-    )
-    # 3b. Stray tool-call closers. (We do NOT strip bare <function> or
-    #     unterminated <function name="..."> because a truncated tail
-    #     during streaming may still be valuable to the user; matches
-    #     OpenClaw's intentional asymmetry.)
-    content = re.sub(
-        r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
-        '',
-        content,
-        flags=re.IGNORECASE,
-    )
+    # Fast path: bypass regex parsing overhead entirely if no tag could possibly exist
+    if '<' not in content:
+        return content
+
+    # Use pre-compiled regexes with capturing groups to consolidate replacements
+    content = _RE_CLOSED_THINK_TAGS.sub('', content)
+    content = _RE_CLOSED_TOOL_TAGS.sub('', content)
+    content = _RE_GEMMA_FUNCTION_TAG.sub('', content)
+    content = _RE_UNTERMINATED_THINK_TAGS.sub('', content)
+    content = _RE_STRAY_THINK_TAGS.sub('', content)
+    content = _RE_STRAY_TOOL_TAGS.sub('', content)
+
     return content
 
 
