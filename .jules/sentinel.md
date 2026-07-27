@@ -1,0 +1,4 @@
+## 2026-05-15 - Unchecked URL schema in _http_ok probing exposes SSRF vector
+**Vulnerability:** The internal `_http_ok` utility in `tui_gateway/server.py` blindly passed unvalidated URL strings to `urllib.request.urlopen()`. While intended for probing `http://` / `ws://` endpoints, Python's `urlopen` natively supports `file://` and `ftp://` schemes by default.
+**Learning:** Utilities designed for internal health checks or probing often bypass strict validation because they operate on internally generated or parsed URLs. However, if any upstream user input or environment variable pollutes the parsed hostname/scheme, it creates a vector for Local File Inclusion (LFI) via the `file://` scheme.
+**Prevention:** Always explicitly restrict URL schemas when calling `urllib.request.urlopen` (e.g., `url.lower().startswith(('http://', 'https://'))`), even in private helper functions. Never rely on the caller's implicit schema safety.
