@@ -286,7 +286,9 @@ def _download_file(url: str, dest: str, timeout: int = 10):
     token = os.getenv("GITHUB_TOKEN")
     if token:
         req.add_header("Authorization", f"token {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as f:
+    if not url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {url}")
+    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as f:  # noqa: S310
         shutil.copyfileobj(resp, f)
 
 
