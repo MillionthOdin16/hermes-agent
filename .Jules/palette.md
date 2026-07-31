@@ -1,0 +1,3 @@
+## 2026-06-04 - Screen Reader Navigation for Nested Icon-Only Elements
+**Learning:** When an icon-only interactive element (like a `<Button>`) is nested inside a wrapper link (`<a>` tag) that provides a `title` or `aria-label`, the innermost interactive element must still have its own `aria-label` attribute to be correctly identified by screen readers. Otherwise, the screen reader may skip the wrapper's label or struggle to announce the focusable element correctly.
+**Action:** Always verify that nested focusable items (e.g. `<a><Button /></Button></a>`) have an explicit `aria-label` on the inner `<Button>` itself, rather than relying solely on the wrapper.
