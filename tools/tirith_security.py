@@ -282,11 +282,13 @@ def is_platform_supported() -> bool:
 
 def _download_file(url: str, dest: str, timeout: int = 10):
     """Download a URL to a local file."""
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("Only HTTP/HTTPS URLs are allowed")
     req = urllib.request.Request(url)
     token = os.getenv("GITHUB_TOKEN")
     if token:
         req.add_header("Authorization", f"token {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as f:
+    with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest, "wb") as f:  # noqa: S310
         shutil.copyfileobj(resp, f)
 
 
