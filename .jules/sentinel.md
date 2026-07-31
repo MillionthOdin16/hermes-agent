@@ -1,0 +1,4 @@
+## 2026-03-04 - Explicit Scheme Validation for URL Open
+**Vulnerability:** Server-Side Request Forgery (SSRF) and arbitrary local file reads via `file://` schemes when passing untrusted URLs to `urllib.request.urlopen`.
+**Learning:** `urllib.request.urlopen` doesn't just open HTTP/HTTPS URLs; it supports handlers like `file://` out of the box, which can lead to severe local file exposure if user inputs are unvalidated.
+**Prevention:** Always explicitly validate that the URL scheme starts with `http://` or `https://` before passing it to `urlopen`, and suppress the associated Bandit B310 warning once validated.
