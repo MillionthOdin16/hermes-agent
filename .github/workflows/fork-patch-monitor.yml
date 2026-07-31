@@ -1,0 +1,156 @@
+name: Fork Patch Monitor
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      mirror_main:
+        description: "Mirror upstream/main to this fork's main branch"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  # Optional repository variable overrides:
+  #   hermes-agent: UPSTREAM_REPO=NousResearch/hermes-agent, PATCH_PREFIX=patch-
+  #   hermes-lcm:   UPSTREAM_REPO=stephenschoettler/hermes-lcm, PATCH_PREFIX=patch-lcm-
+  #   hindsight:    UPSTREAM_REPO=vectorize-io/hindsight, PATCH_PREFIX=patch-H
+  UPSTREAM_REPO: ${{ vars.UPSTREAM_REPO }}
+  PATCH_PREFIX: ${{ vars.PATCH_PREFIX }}
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure repository defaults
+        run: |
+          set -euo pipefail
+          if [ -z "${UPSTREAM_REPO}" ]; then
+            case "${GITHUB_REPOSITORY}" in
+              MillionthOdin16/hermes-agent)
+                UPSTREAM_REPO="NousResearch/hermes-agent"
+                ;;
+              MillionthOdin16/hermes-lcm)
+                UPSTREAM_REPO="stephenschoettler/hermes-lcm"
+                ;;
+              MillionthOdin16/hindsight)
+                UPSTREAM_REPO="vectorize-io/hindsight"
+                ;;
+              *)
+                echo "UPSTREAM_REPO repository variable is required" >&2
+                exit 2
+                ;;
+            esac
+          fi
+          if [ -z "${PATCH_PREFIX}" ]; then
+            case "${GITHUB_REPOSITORY}" in
+              MillionthOdin16/hermes-agent)
+                PATCH_PREFIX="patch-"
+                ;;
+              MillionthOdin16/hermes-lcm)
+                PATCH_PREFIX="patch-lcm-"
+                ;;
+              MillionthOdin16/hindsight)
+                PATCH_PREFIX="patch-H"
+                ;;
+              *)
+                echo "PATCH_PREFIX repository variable is required" >&2
+                exit 2
+                ;;
+            esac
+          fi
+          echo "UPSTREAM_REPO=${UPSTREAM_REPO}" >> "$GITHUB_ENV"
+          echo "PATCH_PREFIX=${PATCH_PREFIX}" >> "$GITHUB_ENV"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream main
+          git fetch origin "+refs/heads/${PATCH_PREFIX}*:refs/remotes/origin/${PATCH_PREFIX}*"
+
+      - name: Check fork main drift
+        id: drift
+        run: |
+          set -euo pipefail
+          fork_sha="$(git rev-parse origin/main)"
+          upstream_sha="$(git rev-parse upstream/main)"
+          echo "fork_sha=${fork_sha}" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
+          if [ "${fork_sha}" = "${upstream_sha}" ]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Optionally mirror fork main
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mirror_main }}
+        run: |
+          set -euo pipefail
+          git push origin "upstream/main:refs/heads/main" \
+            "--force-with-lease=refs/heads/main:${{ steps.drift.outputs.fork_sha }}"
+
+      - name: Check patch branches against upstream
+        id: patches
+        run: |
+          set -euo pipefail
+          ok=0
+          fail=0
+          empty=0
+          report="$(mktemp)"
+          while read -r ref; do
+            [ -n "${ref}" ] || continue
+            branch="${ref#origin/}"
+            echo "Checking ${branch}"
+            if ! git diff --quiet "upstream/main...${ref}" --; then
+              :
+            else
+              echo "EMPTY ${branch}" | tee -a "${report}"
+              empty=$((empty + 1))
+            fi
+            if git merge-tree --write-tree upstream/main "${ref}" >/dev/null; then
+              echo "OK ${branch}" | tee -a "${report}"
+              ok=$((ok + 1))
+            else
+              echo "CONFLICT ${branch}" | tee -a "${report}"
+              fail=$((fail + 1))
+            fi
+          done < <(git for-each-ref --format='%(refname:short)' "refs/remotes/origin/${PATCH_PREFIX}*")
+          {
+            echo "ok=${ok}"
+            echo "fail=${fail}"
+            echo "empty=${empty}"
+            echo "report<<EOF"
+            cat "${report}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [ "${fail}" -gt 0 ] || [ "${empty}" -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Fork Patch Monitor"
+            echo
+            echo "- Upstream: ${UPSTREAM_REPO}"
+            echo "- Patch prefix: ${PATCH_PREFIX}"
+            echo "- Fork main: ${{ steps.drift.outputs.fork_sha }}"
+            echo "- Upstream main: ${{ steps.drift.outputs.upstream_sha }}"
+            echo "- Main drift: ${{ steps.drift.outputs.drift }}"
+            echo "- Clean patch branches: ${{ steps.patches.outputs.ok }}"
+            echo "- Conflicted patch branches: ${{ steps.patches.outputs.fail }}"
+            echo "- Empty patch branches: ${{ steps.patches.outputs.empty }}"
+            echo
+            echo '```'
+            echo "${{ steps.patches.outputs.report }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
