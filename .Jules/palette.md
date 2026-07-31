@@ -1,0 +1,3 @@
+## 2026-05-18 - Missing ARIA label on nested button
+**Learning:** When an icon-only interactive element (like a `<Button>`) is nested inside an `<a>` tag that provides a `title`, the innermost interactive element still needs its own `aria-label` attribute to be correctly identified by screen readers, because the `title` attribute on the wrapper does not automatically provide an accessible name for the interactive element inside.
+**Action:** Always provide an explicit `aria-label` directly on the innermost interactive element (e.g. `<Button>`), even if its wrapper provides visual tooltips via `title`.
