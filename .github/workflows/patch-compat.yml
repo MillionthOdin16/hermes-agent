@@ -1,0 +1,68 @@
+# Patch Compatibility CI — Daily rebase check for patch branches on the fork.
+#
+# Auto-deployed by patch-manager.py deploy-ci.
+# Edit at: ~/.hermes/skills/hermes-customizations/references/patch-compat-ci.yml
+# Redeploy with: python3 patch-manager.py deploy-ci --repo <name>
+
+name: patch-compat
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (check only, no force-push)'
+        type: boolean
+        default: false
+
+env:
+  PATCH_PREFIX: 'patch-'
+
+jobs:
+  rebase-all:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: List patch branches
+        id: branches
+        run: |
+          PATCH_BRANCHES=$(git branch -r | grep "origin/${{ env.PATCH_PREFIX }}" | sed 's|origin/||' || true)
+          echo "branches=$(echo "$PATCH_BRANCHES" | tr '\n' ' ')" >> $GITHUB_OUTPUT
+
+      - name: Rebase each branch
+        id: rebase
+        run: |
+          OK=0
+          FAIL=0
+          for BRANCH in ${{ steps.branches.outputs.branches }}; do
+            echo "=== Rebase $BRANCH ==="
+            git checkout -b $BRANCH origin/$BRANCH 2>/dev/null || git checkout $BRANCH
+
+            if git rebase origin/main 2>&1; then
+              echo "  OK: $BRANCH rebased cleanly"
+              if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
+                git push origin $BRANCH --force-with-lease 2>&1 || echo "  WARN: push failed (expected in dry-run)"
+              fi
+              OK=$((OK + 1))
+            else
+              echo "  ** FAIL: $BRANCH has conflicts, NOT pushing"
+              git rebase --abort 2>/dev/null || true
+              FAIL=$((FAIL + 1))
+            fi
+            git checkout main 2>/dev/null || true
+          done
+          echo "ok=$OK" >> $GITHUB_OUTPUT
+          echo "fail=$FAIL" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "## Patch Rebase Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **OK:** ${{ steps.rebase.outputs.ok }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failed:** ${{ steps.rebase.outputs.fail }}" >> $GITHUB_STEP_SUMMARY
