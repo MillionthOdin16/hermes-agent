@@ -8,6 +8,35 @@ from __future__ import annotations
 
 import re
 
+_NEWLINE_RE = re.compile(r"\n{3,}")
+_BULLET_SPLIT_RE = re.compile(r"(```.*?```)", flags=re.DOTALL)
+_BULLET_MARKER_RE = re.compile(r"(?m)^([ \t]{0,3})[-*+]\s+")
+_CODE_BLOCK_RE = re.compile(r"```[a-zA-Z0-9_+-]*\n?(.*?)```", re.DOTALL)
+_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_INLINE_PATTERNS = [
+    (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), "BOLD"),
+    (re.compile(r"__(.+?)__", re.DOTALL), "BOLD"),
+    (re.compile(r"~~(.+?)~~", re.DOTALL), "STRIKETHROUGH"),
+    (re.compile(r"`(.+?)`"), "MONOSPACE"),
+    (re.compile(r"(?<!\*)\*(?!\*| )(.+?)(?<!\*)\*(?!\*)"), "ITALIC"),
+    (re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)"), "ITALIC"),
+]
+
+def _normalize_bullet_markers(source: str) -> str:
+    """Replace Markdown bullet markers with plain Unicode bullets.
+
+    Signal does not render Markdown list syntax, so ``- item`` and
+    ``* item`` otherwise arrive as literal Markdown markers. Preserve
+    fenced code blocks byte-for-byte; list-looking lines inside code are
+    code, not prose bullets.
+    """
+    parts = _BULLET_SPLIT_RE.split(source)
+    for idx, part in enumerate(parts):
+        if idx % 2 == 1:
+            continue
+        parts[idx] = _BULLET_MARKER_RE.sub(r"\1• ", part)
+    return "".join(parts)
+
 
 def markdown_to_signal(text: str) -> tuple[str, list[str]]:
     """Convert markdown to plain text + Signal textStyles list.
@@ -26,38 +55,21 @@ def markdown_to_signal(text: str) -> tuple[str, list[str]]:
         """Length of *s* in UTF-16 code units."""
         return len(s.encode("utf-16-le")) // 2
 
-    def _normalize_bullet_markers(source: str) -> str:
-        """Replace Markdown bullet markers with plain Unicode bullets.
-
-        Signal does not render Markdown list syntax, so ``- item`` and
-        ``* item`` otherwise arrive as literal Markdown markers. Preserve
-        fenced code blocks byte-for-byte; list-looking lines inside code are
-        code, not prose bullets.
-        """
-        parts = re.split(r"(```.*?```)", source, flags=re.DOTALL)
-        for idx, part in enumerate(parts):
-            if idx % 2 == 1:
-                continue
-            parts[idx] = re.sub(r"(?m)^([ \t]{0,3})[-*+]\s+", r"\1• ", part)
-        return "".join(parts)
-
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = _NEWLINE_RE.sub("\n\n", text)
     text = text.strip()
     text = _normalize_bullet_markers(text)
 
     styles: list[tuple[int, int, str]] = []
 
-    code_block = re.compile(r"```[a-zA-Z0-9_+-]*\n?(.*?)```", re.DOTALL)
-    while match := code_block.search(text):
+    while match := _CODE_BLOCK_RE.search(text):
         inner = match.group(1).rstrip("\n")
         start = match.start()
         text = text[: match.start()] + inner + text[match.end() :]
         styles.append((start, len(inner), "MONOSPACE"))
 
-    heading = re.compile(r"^#{1,6}\s+", re.MULTILINE)
     new_text = ""
     last_end = 0
-    for match in heading.finditer(text):
+    for match in _HEADING_RE.finditer(text):
         new_text += text[last_end : match.start()]
         last_end = match.end()
         eol = text.find("\n", match.end())
@@ -71,18 +83,9 @@ def markdown_to_signal(text: str) -> tuple[str, list[str]]:
     new_text += text[last_end:]
     text = new_text
 
-    patterns = [
-        (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), "BOLD"),
-        (re.compile(r"__(.+?)__", re.DOTALL), "BOLD"),
-        (re.compile(r"~~(.+?)~~", re.DOTALL), "STRIKETHROUGH"),
-        (re.compile(r"`(.+?)`"), "MONOSPACE"),
-        (re.compile(r"(?<!\*)\*(?!\*| )(.+?)(?<!\*)\*(?!\*)"), "ITALIC"),
-        (re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)"), "ITALIC"),
-    ]
-
     all_matches: list[tuple[int, int, int, int, str]] = []
     occupied: list[tuple[int, int]] = []
-    for pattern, style in patterns:
+    for pattern, style in _INLINE_PATTERNS:
         for match in pattern.finditer(text):
             ms, me = match.start(), match.end()
             if not any(ms < oe and me > os for os, oe in occupied):
