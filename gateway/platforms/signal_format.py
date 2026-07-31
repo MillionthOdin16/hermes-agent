@@ -8,6 +8,17 @@ from __future__ import annotations
 
 import re
 
+_CODE_BLOCK_RE = re.compile(r"```[a-zA-Z0-9_+-]*\n?(.*?)```", re.DOTALL)
+_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_STYLE_PATTERNS = [
+    (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), "BOLD"),
+    (re.compile(r"__(.+?)__", re.DOTALL), "BOLD"),
+    (re.compile(r"~~(.+?)~~", re.DOTALL), "STRIKETHROUGH"),
+    (re.compile(r"`(.+?)`"), "MONOSPACE"),
+    (re.compile(r"(?<!\*)\*(?!\*| )(.+?)(?<!\*)\*(?!\*)"), "ITALIC"),
+    (re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)"), "ITALIC"),
+]
+
 
 def markdown_to_signal(text: str) -> tuple[str, list[str]]:
     """Convert markdown to plain text + Signal textStyles list.
@@ -47,17 +58,15 @@ def markdown_to_signal(text: str) -> tuple[str, list[str]]:
 
     styles: list[tuple[int, int, str]] = []
 
-    code_block = re.compile(r"```[a-zA-Z0-9_+-]*\n?(.*?)```", re.DOTALL)
-    while match := code_block.search(text):
+    while match := _CODE_BLOCK_RE.search(text):
         inner = match.group(1).rstrip("\n")
         start = match.start()
         text = text[: match.start()] + inner + text[match.end() :]
         styles.append((start, len(inner), "MONOSPACE"))
 
-    heading = re.compile(r"^#{1,6}\s+", re.MULTILINE)
     new_text = ""
     last_end = 0
-    for match in heading.finditer(text):
+    for match in _HEADING_RE.finditer(text):
         new_text += text[last_end : match.start()]
         last_end = match.end()
         eol = text.find("\n", match.end())
@@ -71,18 +80,9 @@ def markdown_to_signal(text: str) -> tuple[str, list[str]]:
     new_text += text[last_end:]
     text = new_text
 
-    patterns = [
-        (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), "BOLD"),
-        (re.compile(r"__(.+?)__", re.DOTALL), "BOLD"),
-        (re.compile(r"~~(.+?)~~", re.DOTALL), "STRIKETHROUGH"),
-        (re.compile(r"`(.+?)`"), "MONOSPACE"),
-        (re.compile(r"(?<!\*)\*(?!\*| )(.+?)(?<!\*)\*(?!\*)"), "ITALIC"),
-        (re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)"), "ITALIC"),
-    ]
-
     all_matches: list[tuple[int, int, int, int, str]] = []
     occupied: list[tuple[int, int]] = []
-    for pattern, style in patterns:
+    for pattern, style in _STYLE_PATTERNS:
         for match in pattern.finditer(text):
             ms, me = match.start(), match.end()
             if not any(ms < oe and me > os for os, oe in occupied):
