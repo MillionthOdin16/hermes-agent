@@ -237,6 +237,32 @@ _REASONING_TAGS = (
 )
 
 
+_REASONING_RE = [
+    (
+        re.compile(rf"<{tag}>.*?</{tag}>\s*", flags=re.DOTALL | re.IGNORECASE),
+        re.compile(rf"<{tag}>.*$", flags=re.DOTALL | re.IGNORECASE),
+        re.compile(rf"</{tag}>\s*", flags=re.IGNORECASE)
+    )
+    for tag in _REASONING_TAGS
+]
+
+_TC_RE = [
+    re.compile(rf"<{tc_tag}\b[^>]*>.*?</{tc_tag}>\s*", flags=re.DOTALL | re.IGNORECASE)
+    for tc_tag in ("tool_call", "tool_calls", "tool_result", "function_call", "function_calls")
+]
+
+_FUNC_NAME_RE = re.compile(
+    r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
+    r'<function\b[^>]*\bname\s*=[^>]*>'
+    r'(?:(?:(?!</function>).)*)</function>\s*',
+    flags=re.DOTALL | re.IGNORECASE,
+)
+
+_STRAY_TC_CLOSE_RE = re.compile(
+    r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
+    flags=re.IGNORECASE,
+)
+
 def _strip_reasoning_tags(text: str) -> str:
     """Remove reasoning/thinking blocks from displayed text.
 
@@ -258,54 +284,21 @@ def _strip_reasoning_tags(text: str) -> str:
     ``<function name="…">…</function>``). Ported from
     openclaw/openclaw#67318.
     """
+    if not text or "<" not in text:
+        return text.strip() if text else ""
+
     cleaned = text
-    for tag in _REASONING_TAGS:
-        # Closed pair — case-insensitive so <THINK>…</THINK> is handled too.
-        cleaned = re.sub(
-            rf"<{tag}>.*?</{tag}>\s*",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        # Unterminated open tag — strip from the tag to end of text.
-        cleaned = re.sub(
-            rf"<{tag}>.*$",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        # Stray orphan close tag left behind by partial dumps.
-        cleaned = re.sub(
-            rf"</{tag}>\s*",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
-    # Tool-call XML blocks (openclaw/openclaw#67318).
-    for tc_tag in ("tool_call", "tool_calls", "tool_result",
-                   "function_call", "function_calls"):
-        cleaned = re.sub(
-            rf"<{tc_tag}\b[^>]*>.*?</{tc_tag}>\s*",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-    # <function name="..."> — boundary + attribute gated to avoid prose FPs.
-    cleaned = re.sub(
-        r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
-        r'<function\b[^>]*\bname\s*=[^>]*>'
-        r'(?:(?:(?!</function>).)*)</function>\s*',
-        '',
-        cleaned,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    # Stray tool-call close tags.
-    cleaned = re.sub(
-        r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
-        '',
-        cleaned,
-        flags=re.IGNORECASE,
-    )
+    for re_close, re_open, re_stray in _REASONING_RE:
+        cleaned = re_close.sub("", cleaned)
+        cleaned = re_open.sub("", cleaned)
+        cleaned = re_stray.sub("", cleaned)
+
+    for re_tc in _TC_RE:
+        cleaned = re_tc.sub("", cleaned)
+
+    cleaned = _FUNC_NAME_RE.sub("", cleaned)
+    cleaned = _STRAY_TC_CLOSE_RE.sub("", cleaned)
+
     return cleaned.strip()
 
 
