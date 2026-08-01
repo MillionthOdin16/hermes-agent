@@ -135,9 +135,12 @@ class RelayMediaClient:
         url = f"{self._base_url}/relay/media"
 
         def _post() -> Optional[str]:
+            if not url.lower().startswith(('http://', 'https://')):
+                logger.warning("relay media upload rejected unsafe URL scheme: %s", url)
+                return None
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_S) as resp:
+                with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_S) as resp:  # noqa: S310
                     import json
 
                     body = json.loads(resp.read().decode("utf-8"))
@@ -169,9 +172,12 @@ class RelayMediaClient:
             headers["Authorization"] = f"Bearer {self._bearer()}"
 
         def _get() -> Optional[str]:
+            if not url.lower().startswith(('http://', 'https://')):
+                logger.warning("relay media download rejected unsafe URL scheme: %s", url)
+                return None
             req = urllib.request.Request(url, headers=headers)
             try:
-                with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_S) as resp:
+                with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_S) as resp:  # noqa: S310
                     length = int(resp.headers.get("Content-Length") or 0)
                     if length > MEDIA_MAX_BYTES:
                         logger.warning("relay media download too large: %s", url)
