@@ -2310,8 +2310,8 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                 final_response = (_summary_result.content or "").strip()
 
         if final_response:
-            if "<think>" in final_response:
-                final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
+            if "<" in final_response:
+                final_response = re.sub(r'<(think|thinking|reasoning|reasoning_scratchpad|thought)>.*?</\1>\s*', '', final_response, flags=re.DOTALL | re.IGNORECASE).strip()
             if final_response:
                 summary_call_outcome = "success"
                 messages.append({"role": "assistant", "content": final_response})
@@ -2372,8 +2372,8 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
                 final_response = (_retry_result.content or "").strip()
 
             if final_response:
-                if "<think>" in final_response:
-                    final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
+                if "<" in final_response:
+                    final_response = re.sub(r'<(think|thinking|reasoning|reasoning_scratchpad|thought)>.*?</\1>\s*', '', final_response, flags=re.DOTALL | re.IGNORECASE).strip()
                 if final_response:
                     summary_call_outcome = "success"
                     messages.append({"role": "assistant", "content": final_response})
