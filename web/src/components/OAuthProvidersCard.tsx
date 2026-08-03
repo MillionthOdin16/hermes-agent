@@ -221,8 +221,9 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                       rel="noopener noreferrer"
                       className="inline-flex"
                       title={`Open ${p.name} docs`}
+                      aria-label={`Open ${p.name} docs`}
                     >
-                      <Button ghost size="icon">
+                      <Button ghost size="icon" tabIndex={-1} aria-label={`Open ${p.name} docs`}>
                         <ExternalLink />
                       </Button>
                     </a>
