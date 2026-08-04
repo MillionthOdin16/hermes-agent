@@ -277,6 +277,8 @@ function UseAsMenu({
   return (
     <div className={cn("relative", open && "z-20")} data-use-as-menu>
       <Button
+        aria-haspopup="menu"
+        aria-expanded={open}
         size="sm"
         outlined
         onClick={() => setOpen((v) => !v)}
@@ -287,9 +289,13 @@ function UseAsMenu({
         Use as <ChevronDown className="h-3 w-3" />
       </Button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 min-w-[220px] border border-border bg-card shadow-lg">
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-1 z-50 min-w-[220px] border border-border bg-card shadow-lg"
+        >
           <button
             type="button"
+            role="menuitem"
             onClick={() => assign("main", "")}
             disabled={busy}
             className="flex w-full items-center justify-between px-3 py-2 text-xs uppercase hover:bg-muted/50 disabled:opacity-40"
@@ -311,6 +317,7 @@ function UseAsMenu({
 
           <button
             type="button"
+            role="menuitem"
             onClick={() => assign("auxiliary", "")}
             disabled={busy}
             className="flex w-full items-center justify-between px-3 py-1.5 text-xs uppercase hover:bg-muted/50 disabled:opacity-40"
@@ -322,6 +329,7 @@ function UseAsMenu({
             <button
               key={t.key}
               type="button"
+              role="menuitem"
               onClick={() => assign("auxiliary", t.key)}
               disabled={busy}
               className="flex w-full items-center justify-between px-3 py-1.5 text-xs uppercase hover:bg-muted/50 disabled:opacity-40"
