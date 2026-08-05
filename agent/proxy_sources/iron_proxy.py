@@ -547,6 +547,8 @@ def install_iron_proxy(*, force: bool = False) -> Path:
 
 
 def _http_download(url: str, dest: Path) -> None:
+    if not url.lower().startswith(('http://', 'https://')):
+        raise ValueError("Invalid URL scheme")
     req = urllib.request.Request(url, headers={"User-Agent": "hermes-agent"})
     try:
         with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT) as resp:  # noqa: S310
@@ -949,14 +951,15 @@ def reload_proxy() -> bool:
     import urllib.request
 
     host, port = mgmt
+    url = f"http://{host}:{port}/v1/reload"
     req = urllib.request.Request(
-        f"http://{host}:{port}/v1/reload",
+        url,
         method="POST",
         headers={"Authorization": f"Bearer {token}"},
         data=b"",
     )
     try:
-        with urllib.request.urlopen(req, timeout=_MGMT_RELOAD_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_MGMT_RELOAD_TIMEOUT) as resp:  # noqa: S310
             if resp.status == 200:
                 return True
             raise RuntimeError(
