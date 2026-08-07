@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useRef } from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
@@ -46,10 +47,11 @@ export function ScrollToBottomButton() {
   const label = approval ? t.assistant.approval.jumpToApproval : t.assistant.thread.scrollToBottom
 
   return (
-    <button
-      aria-hidden={!visible}
-      aria-label={label}
-      className={cn(
+    <Tip label={label} side="top" sideOffset={10}>
+      <button
+        aria-hidden={!visible}
+        aria-label={label}
+        className={cn(
         'thread-jump-button absolute left-1/2 z-20 grid place-items-center backdrop-blur-[0.75rem] [-webkit-backdrop-filter:blur(0.75rem)]',
         approval
           ? 'h-8 grid-flow-col gap-1.5 rounded-full border border-primary/40 bg-(--composer-fill) px-3 text-primary hover:bg-primary/10'
@@ -68,7 +70,8 @@ export function ScrollToBottomButton() {
       type="button"
     >
       <Codicon name="arrow-down" size={approval ? '0.875rem' : '1rem'} />
-      {approval && <span className="text-xs font-medium">{label}</span>}
-    </button>
+        {approval && <span className="text-xs font-medium">{label}</span>}
+      </button>
+    </Tip>
   )
 }
