@@ -240,6 +240,36 @@ _REASONING_TAGS = (
 )
 
 
+# ⚡ Bolt: Consolidated sequential re.sub passes using pre-compiled regexes with backreferences for performance.
+_CLI_REASONING_BLOCKS_PATTERN = re.compile(
+    rf"<({'|'.join(_REASONING_TAGS)})>.*?</\1>\s*",
+    re.DOTALL | re.IGNORECASE,
+)
+_CLI_REASONING_OPEN_PATTERN = re.compile(
+    rf"<({'|'.join(_REASONING_TAGS)})>.*$",
+    re.DOTALL | re.IGNORECASE,
+)
+_CLI_REASONING_CLOSE_PATTERN = re.compile(
+    rf"</({'|'.join(_REASONING_TAGS)})>\s*",
+    re.IGNORECASE,
+)
+_CLI_TOOL_TAGS = ("tool_call", "tool_calls", "tool_result", "function_call", "function_calls")
+_CLI_TOOL_BLOCKS_PATTERN = re.compile(
+    rf"<({'|'.join(_CLI_TOOL_TAGS)})\b[^>]*>.*?</\1>\s*",
+    re.DOTALL | re.IGNORECASE,
+)
+_CLI_FUNCTION_BLOCK_PATTERN = re.compile(
+    r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
+    r'<function\b[^>]*\bname\s*=[^>]*>'
+    r'(?:(?:(?!</function>).)*)</function>\s*',
+    re.DOTALL | re.IGNORECASE,
+)
+_CLI_TOOL_CLOSE_PATTERN = re.compile(
+    r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
+    re.IGNORECASE,
+)
+
+
 def _strip_reasoning_tags(text: str) -> str:
     """Remove reasoning/thinking blocks from displayed text.
 
@@ -262,53 +292,22 @@ def _strip_reasoning_tags(text: str) -> str:
     openclaw/openclaw#67318.
     """
     cleaned = text
-    for tag in _REASONING_TAGS:
-        # Closed pair — case-insensitive so <THINK>…</THINK> is handled too.
-        cleaned = re.sub(
-            rf"<{tag}>.*?</{tag}>\s*",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        # Unterminated open tag — strip from the tag to end of text.
-        cleaned = re.sub(
-            rf"<{tag}>.*$",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        # Stray orphan close tag left behind by partial dumps.
-        cleaned = re.sub(
-            rf"</{tag}>\s*",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
+    # Closed pair — case-insensitive so <THINK>…</THINK> is handled too.
+    cleaned = _CLI_REASONING_BLOCKS_PATTERN.sub("", cleaned)
+    # Unterminated open tag — strip from the tag to end of text.
+    cleaned = _CLI_REASONING_OPEN_PATTERN.sub("", cleaned)
+    # Stray orphan close tag left behind by partial dumps.
+    cleaned = _CLI_REASONING_CLOSE_PATTERN.sub("", cleaned)
+
     # Tool-call XML blocks (openclaw/openclaw#67318).
-    for tc_tag in ("tool_call", "tool_calls", "tool_result",
-                   "function_call", "function_calls"):
-        cleaned = re.sub(
-            rf"<{tc_tag}\b[^>]*>.*?</{tc_tag}>\s*",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+    cleaned = _CLI_TOOL_BLOCKS_PATTERN.sub("", cleaned)
+
     # <function name="..."> — boundary + attribute gated to avoid prose FPs.
-    cleaned = re.sub(
-        r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
-        r'<function\b[^>]*\bname\s*=[^>]*>'
-        r'(?:(?:(?!</function>).)*)</function>\s*',
-        '',
-        cleaned,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
+    cleaned = _CLI_FUNCTION_BLOCK_PATTERN.sub("", cleaned)
+
     # Stray tool-call close tags.
-    cleaned = re.sub(
-        r'</(?:tool_call|tool_calls|tool_result|function_call|function_calls|function)>\s*',
-        '',
-        cleaned,
-        flags=re.IGNORECASE,
-    )
+    cleaned = _CLI_TOOL_CLOSE_PATTERN.sub("", cleaned)
+
     return cleaned.strip()
 
 
