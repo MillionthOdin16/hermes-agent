@@ -123,13 +123,15 @@ function BlueprintCard({
             ghost={open}
             size="sm"
             onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            aria-controls={`blueprint-panel-${blueprint.key}`}
           >
             {open ? "Cancel" : "Set up"}
           </Button>
         </div>
 
         {open && (
-          <div className="space-y-3 border-t pt-3">
+          <div id={`blueprint-panel-${blueprint.key}`} className="space-y-3 border-t pt-3">
             {blueprint.fields.map((f) => (
               <div key={f.name} className="space-y-1">
                 <Label htmlFor={`${blueprint.key}-${f.name}`}>{f.label}</Label>
