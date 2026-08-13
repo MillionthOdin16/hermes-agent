@@ -56,14 +56,13 @@ _MAX_AUTH_REFRESH_ATTEMPTS = 2
 _REASONING_TAG_NAMES = ("think", "thinking", "reasoning", "REASONING_SCRATCHPAD", "thought")
 _TOOL_CALL_TAG_NAMES = ("tool_call", "tool_calls", "tool_result", "function_call", "function_calls")
 
-_REASONING_BLOCK_PATTERNS = tuple(
-    re.compile(rf"<{name}>.*?</{name}>", re.DOTALL | re.IGNORECASE)
-    for name in _REASONING_TAG_NAMES
+# ⚡ Bolt: Consolidated reasoning and tool tags regex passes pre-compiled
+_CONSOLIDATED_REASONING_BLOCK_PATTERN = re.compile(
+    rf"<({'|'.join(_REASONING_TAG_NAMES)})>.*?</\1>", re.DOTALL | re.IGNORECASE
 )
 
-_TOOL_CALL_BLOCK_PATTERNS = tuple(
-    re.compile(rf"<{name}\b[^>]*>.*?</{name}>", re.DOTALL | re.IGNORECASE)
-    for name in _TOOL_CALL_TAG_NAMES
+_CONSOLIDATED_TOOL_CALL_BLOCK_PATTERN = re.compile(
+    rf"<({'|'.join(_TOOL_CALL_TAG_NAMES)})\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
 )
 
 # Named <function name=...> blocks — see strip_think_blocks step 1c for the
@@ -872,16 +871,16 @@ def strip_think_blocks(agent, content: str) -> str:
             content = str(content)
         if not content:
             return ""
+    # ⚡ Bolt: Use pre-compiled consolidated passes
     # 1. Closed tag pairs — case-insensitive for all variants so
     #    mixed-case tags (<THINK>, <Thinking>) don't slip through to
     #    the unterminated-tag pass and take trailing content with them.
-    for _pattern in _REASONING_BLOCK_PATTERNS:
-        content = _pattern.sub('', content)
+    content = _CONSOLIDATED_REASONING_BLOCK_PATTERN.sub('', content)
+
     # 1b. Tool-call XML blocks (openclaw/openclaw#67318). Handle the
     #     generic tag names first — they have no attribute gating since
     #     a literal <tool_call> in prose is already vanishingly rare.
-    for _pattern in _TOOL_CALL_BLOCK_PATTERNS:
-        content = _pattern.sub('', content)
+    content = _CONSOLIDATED_TOOL_CALL_BLOCK_PATTERN.sub('', content)
     # 1c. <function name="...">...</function> — Gemma-style standalone
     #     tool call. Only strip when the tag sits at a block boundary
     #     (start of text, after a newline, or after sentence-ending
