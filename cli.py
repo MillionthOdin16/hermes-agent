@@ -239,6 +239,22 @@ _REASONING_TAGS = (
     "thought",
 )
 
+# ⚡ Bolt: Pre-compiled regex patterns for reasoning and tool tags
+_CONSOLIDATED_REASONING_PATTERN = re.compile(
+    rf"<({'|'.join(_REASONING_TAGS)})>.*?</\1>\s*", re.DOTALL | re.IGNORECASE
+)
+_CONSOLIDATED_UNTERMINATED_REASONING_PATTERN = re.compile(
+    rf"<({'|'.join(_REASONING_TAGS)})>.*$", re.DOTALL | re.IGNORECASE
+)
+_CONSOLIDATED_ORPHAN_REASONING_PATTERN = re.compile(
+    rf"</(?:{'|'.join(_REASONING_TAGS)})>\s*", re.IGNORECASE
+)
+
+_TOOL_CALL_TAGS_PATTERN = "tool_call|tool_calls|tool_result|function_call|function_calls"
+_CONSOLIDATED_TOOL_CALL_PATTERN = re.compile(
+    rf"<({_TOOL_CALL_TAGS_PATTERN})\b[^>]*>.*?</\1>\s*", re.DOTALL | re.IGNORECASE
+)
+
 
 def _strip_reasoning_tags(text: str) -> str:
     """Remove reasoning/thinking blocks from displayed text.
@@ -262,37 +278,19 @@ def _strip_reasoning_tags(text: str) -> str:
     openclaw/openclaw#67318.
     """
     cleaned = text
-    for tag in _REASONING_TAGS:
-        # Closed pair — case-insensitive so <THINK>…</THINK> is handled too.
-        cleaned = re.sub(
-            rf"<{tag}>.*?</{tag}>\s*",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        # Unterminated open tag — strip from the tag to end of text.
-        cleaned = re.sub(
-            rf"<{tag}>.*$",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        # Stray orphan close tag left behind by partial dumps.
-        cleaned = re.sub(
-            rf"</{tag}>\s*",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
+    # ⚡ Bolt: Consolidated reasoning tags regex passes using pre-compiled patterns
+
+    # Closed pair — case-insensitive so <THINK>…</THINK> is handled too.
+    cleaned = _CONSOLIDATED_REASONING_PATTERN.sub("", cleaned)
+
+    # Unterminated open tag — strip from the tag to end of text.
+    cleaned = _CONSOLIDATED_UNTERMINATED_REASONING_PATTERN.sub("", cleaned)
+
+    # Stray orphan close tag left behind by partial dumps.
+    cleaned = _CONSOLIDATED_ORPHAN_REASONING_PATTERN.sub("", cleaned)
+
     # Tool-call XML blocks (openclaw/openclaw#67318).
-    for tc_tag in ("tool_call", "tool_calls", "tool_result",
-                   "function_call", "function_calls"):
-        cleaned = re.sub(
-            rf"<{tc_tag}\b[^>]*>.*?</{tc_tag}>\s*",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+    cleaned = _CONSOLIDATED_TOOL_CALL_PATTERN.sub("", cleaned)
     # <function name="..."> — boundary + attribute gated to avoid prose FPs.
     cleaned = re.sub(
         r'(?:(?<=^)|(?<=[\n\r.!?:]))[ \t]*'
