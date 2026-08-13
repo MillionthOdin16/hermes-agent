@@ -200,6 +200,8 @@ def _query_osv(
         payload["version"] = version
 
     data = json.dumps(payload).encode("utf-8")
+    if not _OSV_ENDPOINT.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {_OSV_ENDPOINT}")
     req = urllib.request.Request(
         _OSV_ENDPOINT,
         data=data,

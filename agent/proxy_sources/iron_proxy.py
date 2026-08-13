@@ -547,6 +547,8 @@ def install_iron_proxy(*, force: bool = False) -> Path:
 
 
 def _http_download(url: str, dest: Path) -> None:
+    if not url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "hermes-agent"})
     try:
         with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT) as resp:  # noqa: S310

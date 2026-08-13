@@ -1606,6 +1606,8 @@ def qr_scan_for_bot_info(
     # ── Step 1: Fetch QR code ──
     print("  Connecting to WeCom...", end="", flush=True)
     try:
+        if not generate_url.lower().startswith(('http://', 'https://')):
+            raise ValueError(f"Invalid URL scheme: {generate_url}")
         req = urllib.request.Request(generate_url, headers={"User-Agent": "HermesAgent/1.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
@@ -1656,6 +1658,8 @@ def qr_scan_for_bot_info(
 
     while time.monotonic() < deadline:
         try:
+            if not query_url.lower().startswith(('http://', 'https://')):
+                raise ValueError(f"Invalid URL scheme: {query_url}")
             req = urllib.request.Request(query_url, headers={"User-Agent": "HermesAgent/1.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read().decode("utf-8"))

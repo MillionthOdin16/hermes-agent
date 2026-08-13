@@ -135,6 +135,8 @@ class RelayMediaClient:
         url = f"{self._base_url}/relay/media"
 
         def _post() -> Optional[str]:
+            if not url.lower().startswith(('http://', 'https://')):
+                raise ValueError(f"Invalid URL scheme: {url}")
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             try:
                 with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_S) as resp:
@@ -169,6 +171,8 @@ class RelayMediaClient:
             headers["Authorization"] = f"Bearer {self._bearer()}"
 
         def _get() -> Optional[str]:
+            if not url.lower().startswith(('http://', 'https://')):
+                raise ValueError(f"Invalid URL scheme: {url}")
             req = urllib.request.Request(url, headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_S) as resp:

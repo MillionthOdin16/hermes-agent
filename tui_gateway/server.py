@@ -13868,6 +13868,8 @@ def _http_ok(url: str, timeout: float) -> bool:
     import urllib.request
 
     try:
+        if not url.lower().startswith(('http://', 'https://')):
+            return False
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return 200 <= getattr(resp, "status", 200) < 300
     except Exception:

@@ -282,6 +282,8 @@ def is_platform_supported() -> bool:
 
 def _download_file(url: str, dest: str, timeout: int = 10):
     """Download a URL to a local file."""
+    if not url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {url}")
     req = urllib.request.Request(url)
     from agent.secret_scope import get_secret
     token = get_secret("GITHUB_TOKEN")

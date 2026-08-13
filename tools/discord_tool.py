@@ -93,6 +93,8 @@ def _discord_request(
     if body is not None:
         data = json.dumps(body).encode("utf-8")
 
+    if not url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {url}")
     req = urllib.request.Request(
         url,
         data=data,
