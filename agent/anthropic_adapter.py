@@ -1123,6 +1123,8 @@ def refresh_anthropic_oauth_pure(refresh_token: str, *, use_json: bool = False) 
     ]
     last_error = None
     for endpoint in token_endpoints:
+        if not endpoint.lower().startswith(('http://', 'https://')):
+            raise ValueError(f"Invalid URL scheme: {endpoint}")
         req = urllib.request.Request(
             endpoint,
             data=data,

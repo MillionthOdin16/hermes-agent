@@ -458,6 +458,8 @@ def _post_provision(
     if display_name:
         body["displayName"] = display_name
     data = json.dumps(body).encode("utf-8")
+    if not provision_url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {provision_url}")
     req = urllib.request.Request(
         provision_url,
         data=data,
@@ -545,6 +547,8 @@ def _resolve_relay_identity_token() -> str:
     }
     if scope:
         form["scope"] = scope
+    if not token_url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {token_url}")
     req = urllib.request.Request(
         token_url,
         data=urllib.parse.urlencode(form).encode("utf-8"),
@@ -715,6 +719,8 @@ def _post_policy(*, policy_url: str, token: str, policy: dict, timeout: float = 
     import urllib.request
 
     data = json.dumps(policy).encode("utf-8")
+    if not policy_url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {policy_url}")
     req = urllib.request.Request(
         policy_url,
         data=data,

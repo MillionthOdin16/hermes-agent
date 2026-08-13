@@ -1206,6 +1206,8 @@ class A2AAdapter(BasePlatformAdapter):
 
         try:
             data = json.dumps(payload).encode("utf-8")
+            if not callback_url.lower().startswith(('http://', 'https://')):
+                raise ValueError(f"Invalid URL scheme: {callback_url}")
             req = urllib.request.Request(callback_url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
                 if 200 <= resp.status < 300:

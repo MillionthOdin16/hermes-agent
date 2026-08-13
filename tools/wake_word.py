@@ -613,6 +613,8 @@ def _ensure_sherpa_model(root: Optional[Path] = None) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     archive = root / f"{_SHERPA_KWS_MODEL_DIR}.tar.bz2"
     logger.info("wake word: downloading sherpa KWS model (one-time, ~13 MB)")
+    if not _SHERPA_KWS_MODEL_URL.lower().startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid URL scheme: {_SHERPA_KWS_MODEL_URL}")
     urllib.request.urlretrieve(_SHERPA_KWS_MODEL_URL, archive)  # noqa: S310
     with tarfile.open(archive, "r:bz2") as tf:
         tf.extractall(root, filter="data")
