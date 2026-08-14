@@ -10,6 +10,7 @@ import {
   Settings2,
   Star,
   Wrench,
+  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -841,7 +842,7 @@ function MoaModelsModal({
               {presetNames.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
             <Button size="sm" outlined onClick={() => setDraft((prev) => ({ ...prev, default_preset: selected }))}>Set default</Button>
-            <Button size="sm" ghost disabled={presetNames.length <= 1} onClick={deletePreset}>Delete</Button>
+            <Button size="sm" ghost className="text-destructive" disabled={presetNames.length <= 1} onClick={deletePreset} prefix={<Trash2 className="h-3.5 w-3.5" />}>Delete</Button>
             <input
               className="border border-border bg-background px-2 py-1 text-xs"
               placeholder="new preset name"
