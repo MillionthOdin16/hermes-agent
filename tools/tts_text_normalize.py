@@ -13,6 +13,59 @@ from __future__ import annotations
 import html
 import re
 
+# ⚡ Bolt: Consolidated multiple sequential regex passes into unified pre-compiled regexes
+# to avoid O(N) regex evaluation passes for TTS text normalization.
+_RE_TTS_MONEY_WEATHER = re.compile(
+    r"(?:"
+    r"NZ\$\s*(?P<nz>[\d,]*\d(?:\.\d+)?)|"
+    r"A\$\s*(?P<a>[\d,]*\d(?:\.\d+)?)|"
+    r"US\$\s*(?P<us>[\d,]*\d(?:\.\d+)?)|"
+    r"€\s*(?P<eur>[\d,]*\d(?:\.\d+)?)|"
+    r"£\s*(?P<gbp>[\d,]*\d(?:\.\d+)?)|"
+    r"\$\s*(?P<usd>[\d,]*\d(?:\.\d+)?)|"
+    r"(?<=\d)\s*(?:"
+    r"(?P<kmh>km\s*/\s*h|km/h)|"
+    r"(?P<mm>mm)|"
+    r"(?P<cm>cm)|"
+    r"(?P<m>m)"
+    r")\b"
+    r")",
+    flags=re.IGNORECASE
+)
+
+def _tts_money_weather_replacer(m: re.Match) -> str:
+    g = m.lastgroup
+    if g == 'nz': return m.group('nz') + " New Zealand dollars"
+    if g == 'a': return m.group('a') + " Australian dollars"
+    if g == 'us': return m.group('us') + " US dollars"
+    if g == 'eur': return m.group('eur') + " euros"
+    if g == 'gbp': return m.group('gbp') + " pounds"
+    if g == 'usd': return m.group('usd') + " dollars"
+    if g == 'kmh': return " kilometres per hour"
+    if g == 'mm': return " millimetres"
+    if g == 'cm': return " centimetres"
+    if g == 'm': return " metres"
+    return m.group(0)
+
+_RE_TTS_TEMP = re.compile(
+    r"(?<!\w)(?P<numc>[-+]?\d+(?:\.\d+)?)\s*°\s*C\b|"
+    r"(?<!\w)(?P<numf>[-+]?\d+(?:\.\d+)?)\s*°\s*F\b|"
+    r"(?P<barec>°\s*C)\b|"
+    r"(?P<baref>°\s*F)\b|"
+    r"(?<!\w)(?P<numdeg>[-+]?\d+(?:\.\d+)?)\s*°",
+    flags=re.IGNORECASE
+)
+
+def _tts_temp_replacer(m: re.Match) -> str:
+    g = m.lastgroup
+    if g == 'numc': return m.group('numc') + " degrees Celsius"
+    if g == 'numf': return m.group('numf') + " degrees Fahrenheit"
+    if g == 'barec': return "degrees Celsius"
+    if g == 'baref': return "degrees Fahrenheit"
+    if g == 'numdeg': return m.group('numdeg') + " degrees"
+    return m.group(0)
+
+
 # Sentinel appended to former heading lines so smooth_whitespace_for_tts can
 # fold a heading into the sentence that follows it ("Weather, it will be sunny")
 # rather than leaving a bare "Weather." label that reads abruptly aloud.
@@ -112,35 +165,16 @@ def normalize_symbols_for_tts(text: str) -> str:
     text = text.replace("…", "...")  # ellipsis
     text = _normalize_temperature_ranges(text)
 
-    # Temperatures with a number.  Do this before generic degree handling.
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*C\b", r"\1 degrees Celsius", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*F\b", r"\1 degrees Fahrenheit", text, flags=re.IGNORECASE)
-    # Bare units with no leading number ("measured in degrees C").
-    text = re.sub(r"°\s*C\b", "degrees Celsius", text, flags=re.IGNORECASE)
-    text = re.sub(r"°\s*F\b", "degrees Fahrenheit", text, flags=re.IGNORECASE)
-    # Any remaining degree symbol (angles, stray cases).
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°", r"\1 degrees", text)
+    # ⚡ Bolt: Consolidated sequential regex replacements for temperature, units, and money
+    # into single-pass pre-compiled regex operations.
+    text = _RE_TTS_TEMP.sub(_tts_temp_replacer, text)
     text = text.replace("°", " degrees")
-
-    # Common weather/travel units.
-    text = re.sub(r"(?<=\d)\s*km\s*/\s*h\b", " kilometres per hour", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*km/h\b", " kilometres per hour", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*mm\b", " millimetres", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*cm\b", " centimetres", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*m\b", " metres", text, flags=re.IGNORECASE)
 
     # Numeric rates only ("5/month" -> "5 per month").  Requiring digit-then-letter
     # keeps "and/or", "N/A", "TCP/IP" and dates like "2026/06" intact.
     text = re.sub(r"(?<=\d)\s*/\s*(?=[A-Za-z])", " per ", text)
 
-    # Money and percentages.  The integer part must END in a digit so a trailing
-    # comma ("A$50, ...") is not swallowed into the spoken amount.
-    text = re.sub(r"NZ\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 New Zealand dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"A\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 Australian dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"US\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 US dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"€\s*([\d,]*\d(?:\.\d+)?)", r"\1 euros", text)
-    text = re.sub(r"£\s*([\d,]*\d(?:\.\d+)?)", r"\1 pounds", text)
-    text = re.sub(r"\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 dollars", text)
+    text = _RE_TTS_MONEY_WEATHER.sub(_tts_money_weather_replacer, text)
     text = re.sub(r"(?<=\d)\s*%", " percent", text)
 
     # Operators and separators that commonly leak from formatted answers.
