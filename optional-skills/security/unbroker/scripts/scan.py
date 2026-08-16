@@ -14,6 +14,8 @@ USER_AGENT = "Mozilla/5.0 (compatible; unbroker/1.0; data opt-out)"
 
 
 def fetch(url: str, timeout: int = 20) -> tuple[int, str]:
+    if not url.lower().startswith(("http://", "https://")):
+        return 0, ""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (https only by convention)
