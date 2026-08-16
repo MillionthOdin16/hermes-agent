@@ -79,12 +79,16 @@ def _auth_header(auth: dict) -> dict:
 # --------------------------------------------------------------------------
 
 def _http_get_json(url: str, headers: dict, timeout: int) -> dict:
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("Invalid URL scheme")
     req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (configured peers)
         return json.loads(resp.read().decode("utf-8"))
 
 
 def _http_post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("Invalid URL scheme")
     data = json.dumps(body).encode("utf-8")
     hdrs = {"Content-Type": "application/json", "A2A-Version": protocol.PROTOCOL_VERSION, **headers}
     req = urllib.request.Request(url, data=data, headers=hdrs, method="POST")

@@ -213,6 +213,8 @@ MIN_EXPECTED_CA = 100  # CA registry has ~500+; far fewer => wrong/empty file, w
 
 
 def fetch(url: str = DEFAULT_URL, timeout: int = 60) -> str:
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("Invalid URL scheme")
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return resp.read().decode("utf-8", errors="replace")
