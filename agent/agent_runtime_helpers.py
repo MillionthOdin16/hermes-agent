@@ -56,15 +56,11 @@ _MAX_AUTH_REFRESH_ATTEMPTS = 2
 _REASONING_TAG_NAMES = ("think", "thinking", "reasoning", "REASONING_SCRATCHPAD", "thought")
 _TOOL_CALL_TAG_NAMES = ("tool_call", "tool_calls", "tool_result", "function_call", "function_calls")
 
-_REASONING_BLOCK_PATTERNS = tuple(
-    re.compile(rf"<{name}>.*?</{name}>", re.DOTALL | re.IGNORECASE)
-    for name in _REASONING_TAG_NAMES
-)
+# ⚡ Bolt: Consolidated reasoning tags into a single regex pass for performance
+_REASONING_BLOCK_PATTERNS = [re.compile(r"<(" + "|".join(_REASONING_TAG_NAMES) + r")>.*?</\1>", re.DOTALL | re.IGNORECASE)]
 
-_TOOL_CALL_BLOCK_PATTERNS = tuple(
-    re.compile(rf"<{name}\b[^>]*>.*?</{name}>", re.DOTALL | re.IGNORECASE)
-    for name in _TOOL_CALL_TAG_NAMES
-)
+# ⚡ Bolt: Consolidated tool call tags into a single regex pass for performance
+_TOOL_CALL_BLOCK_PATTERNS = [re.compile(r"<(" + "|".join(_TOOL_CALL_TAG_NAMES) + r")\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)]
 
 # Named <function name=...> blocks — see strip_think_blocks step 1c for the
 # full rationale (sentence-boundary lookbehind + tempered-dot body so a plain
