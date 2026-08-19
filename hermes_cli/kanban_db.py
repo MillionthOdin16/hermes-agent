@@ -7439,8 +7439,13 @@ def _error_fingerprint(error_text: str) -> str:
     Strips host-specific details (PIDs, timestamps) so that errors
     with the same root cause produce the same fingerprint.
     """
-    fp = re.sub(r'\bpid \d+\b', 'pid N', error_text[:80])
-    fp = re.sub(r'\b\d{10,}\b', '<TS>', fp)
+    # ⚡ Bolt: Consolidated error fingerprinting regexes into a single sub call
+    # This prevents allocating intermediate strings during formatting.
+    fp = re.sub(
+        r'\bpid \d+\b|\b\d{10,}\b',
+        lambda m: 'pid N' if m.group().startswith('p') else '<TS>',
+        error_text[:80]
+    )
     return fp.lower().strip()
 
 

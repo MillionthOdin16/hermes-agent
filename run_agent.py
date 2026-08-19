@@ -2897,8 +2897,13 @@ class AIAgent:
         if not content:
             return content
         content = convert_scratchpad_to_think(content)
-        content = re.sub(r'\n+(<think>)', r'\n\1', content)
-        content = re.sub(r'(</think>)\n+', r'\1\n', content)
+        # ⚡ Bolt: Consolidated think tag newline replacements into a single regex pass.
+        # Using a single regex sub with a lambda prevents a second O(n) string allocation pass.
+        content = re.sub(
+            r'\n+(<think>)|(</think>)\n+',
+            lambda m: '\n' + m.group(1) if m.group(1) else m.group(2) + '\n',
+            content
+        )
         return content.strip()
 
     @staticmethod
