@@ -66,14 +66,16 @@ export function LanguageSwitcher({ collapsed = false, dropUp = false }: Language
     <div ref={containerRef} className="relative inline-flex">
       <Button
         ghost
+        size={collapsed ? "icon" : undefined}
         onClick={() => setOpen((v) => !v)}
         title={t.language.switchTo}
         aria-label={t.language.switchTo}
         aria-haspopup="listbox"
         aria-expanded={open}
         className={cn(
-          "px-2 py-1 normal-case tracking-normal font-normal text-xs text-text-secondary hover:text-foreground",
-          collapsed && "hover:bg-transparent",
+          collapsed
+            ? "text-text-secondary hover:text-foreground hover:bg-transparent"
+            : "px-2 py-1 normal-case tracking-normal font-normal text-xs text-text-secondary hover:text-foreground",
         )}
       >
         <span className="inline-flex items-center gap-1.5">
