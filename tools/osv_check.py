@@ -195,6 +195,8 @@ def _query_osv(
     package: str, ecosystem: str, version: Optional[str] = None
 ) -> list:
     """Query the OSV API for MAL-* advisories. Returns list of malware vulns."""
+    if not _OSV_ENDPOINT.startswith(("http://", "https://")):
+        return []
     payload = {"package": {"name": package, "ecosystem": ecosystem}}
     if version:
         payload["version"] = version
