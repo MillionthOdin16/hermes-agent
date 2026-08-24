@@ -47,6 +47,12 @@ from utils import base_url_host_matches, base_url_hostname, env_float, env_int
 logger = logging.getLogger(__name__)
 _OPENROUTER_PROVIDER_SORT_VALUES = {"throughput", "latency", "price"}
 
+# Compile regexes used frequently for reasoning and think blocks
+# ⚡ Bolt: Compiled regex at module level to prevent recompilation on hot path
+_THINK_BLOCK_RE = re.compile(r'<think>(.*?)</think>', flags=re.DOTALL)
+_STRIP_THINK_RE = re.compile(r'<think>.*?</think>\s*', flags=re.DOTALL)
+
+
 # When the fallback chain is fully exhausted on a non-rate-limit failure
 # (e.g. every provider returns a non-retryable client error like HTTP 400),
 # arm a short cooldown so the NEXT turn's restore_primary_runtime stays gated
@@ -1611,7 +1617,7 @@ def build_assistant_message(agent, assistant_message, finish_reason: str) -> dic
     # directly in the content rather than returning separate API fields).
     if not reasoning_text:
         content = flatten_message_text(getattr(assistant_message, "content", None))
-        think_blocks = re.findall(r'<think>(.*?)</think>', content, flags=re.DOTALL)
+        think_blocks = _THINK_BLOCK_RE.findall(content)
         if think_blocks:
             combined = "\n\n".join(b.strip() for b in think_blocks if b.strip())
             reasoning_text = combined or None
@@ -2534,7 +2540,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
 
         if final_response:
             if "<think>" in final_response:
-                final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
+                final_response = _STRIP_THINK_RE.sub('', final_response).strip()
             if final_response:
                 summary_call_outcome = "success"
                 messages.append({"role": "assistant", "content": final_response})
@@ -2596,7 +2602,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
 
             if final_response:
                 if "<think>" in final_response:
-                    final_response = re.sub(r'<think>.*?</think>\s*', '', final_response, flags=re.DOTALL).strip()
+                    final_response = _STRIP_THINK_RE.sub('', final_response).strip()
                 if final_response:
                     summary_call_outcome = "success"
                     messages.append({"role": "assistant", "content": final_response})
