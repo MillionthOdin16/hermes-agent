@@ -84,21 +84,61 @@ def strip_markdown_for_tts(text: str) -> str:
     return text
 
 
+# ⚡ Bolt: Compile regexes at the module level for performance
+_RE_TEMP_RANGE_C = re.compile(
+    r"(?<!\w)([-+\u2212]?\d+(?:\.\d+)?)\s*[\u2013\u2014-]\s*([-+\u2212]?\d+(?:\.\d+)?)\s*°\s*C\b",
+    flags=re.IGNORECASE,
+)
+_RE_TEMP_RANGE_F = re.compile(
+    r"(?<!\w)([-+\u2212]?\d+(?:\.\d+)?)\s*[\u2013\u2014-]\s*([-+\u2212]?\d+(?:\.\d+)?)\s*°\s*F\b",
+    flags=re.IGNORECASE,
+)
+
 def _normalize_temperature_ranges(text: str) -> str:
     # 11-17 degrees C -> "11 to 17 degrees Celsius" (en/em dash or hyphen).
-    text = re.sub(
-        r"(?<!\w)([-+\u2212]?\d+(?:\.\d+)?)\s*[\u2013\u2014-]\s*([-+\u2212]?\d+(?:\.\d+)?)\s*°\s*C\b",
+    text = _RE_TEMP_RANGE_C.sub(
         lambda m: f"{m.group(1).replace(chr(0x2212), '-')} to {m.group(2).replace(chr(0x2212), '-')} degrees Celsius",
         text,
-        flags=re.IGNORECASE,
     )
-    text = re.sub(
-        r"(?<!\w)([-+\u2212]?\d+(?:\.\d+)?)\s*[\u2013\u2014-]\s*([-+\u2212]?\d+(?:\.\d+)?)\s*°\s*F\b",
+    text = _RE_TEMP_RANGE_F.sub(
         lambda m: f"{m.group(1).replace(chr(0x2212), '-')} to {m.group(2).replace(chr(0x2212), '-')} degrees Fahrenheit",
         text,
-        flags=re.IGNORECASE,
     )
     return text
+
+
+_RE_SPACES = re.compile("[   ]")
+_RE_TEMP_C_NUM = re.compile(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*C\b", flags=re.IGNORECASE)
+_RE_TEMP_F_NUM = re.compile(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*F\b", flags=re.IGNORECASE)
+_RE_TEMP_C_BARE = re.compile(r"°\s*C\b", flags=re.IGNORECASE)
+_RE_TEMP_F_BARE = re.compile(r"°\s*F\b", flags=re.IGNORECASE)
+_RE_TEMP_GENERIC = re.compile(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°")
+
+_RE_UNIT_KMH1 = re.compile(r"(?<=\d)\s*km\s*/\s*h\b", flags=re.IGNORECASE)
+_RE_UNIT_KMH2 = re.compile(r"(?<=\d)\s*km/h\b", flags=re.IGNORECASE)
+_RE_UNIT_MM = re.compile(r"(?<=\d)\s*mm\b", flags=re.IGNORECASE)
+_RE_UNIT_CM = re.compile(r"(?<=\d)\s*cm\b", flags=re.IGNORECASE)
+_RE_UNIT_M = re.compile(r"(?<=\d)\s*m\b", flags=re.IGNORECASE)
+_RE_RATE_PER = re.compile(r"(?<=\d)\s*/\s*(?=[A-Za-z])")
+
+_RE_MONEY_NZD = re.compile(r"NZ\$\s*([\d,]*\d(?:\.\d+)?)", flags=re.IGNORECASE)
+_RE_MONEY_AUD = re.compile(r"A\$\s*([\d,]*\d(?:\.\d+)?)", flags=re.IGNORECASE)
+_RE_MONEY_USD = re.compile(r"US\$\s*([\d,]*\d(?:\.\d+)?)", flags=re.IGNORECASE)
+_RE_MONEY_EUR = re.compile(r"€\s*([\d,]*\d(?:\.\d+)?)")
+_RE_MONEY_GBP = re.compile(r"£\s*([\d,]*\d(?:\.\d+)?)")
+_RE_MONEY_GENERIC = re.compile(r"\$\s*([\d,]*\d(?:\.\d+)?)")
+_RE_PERCENT = re.compile(r"(?<=\d)\s*%")
+_RE_BULLETS = re.compile("[•◦▪▫]")
+
+_RE_NEWLINES_3 = re.compile(r"\n{3,}")
+_RE_SPACES_2 = re.compile(r"[ \t]{2,}")
+_RE_SPACE_PUNCT = re.compile(r"\s+([,.;:!?])")
+_RE_PUNCT_LETTER = re.compile(r"([,.;:!?])([A-Za-z])")
+_RE_ELLIPSIS_4 = re.compile(r"\.{4,}")
+
+_RE_NEWLINES_2 = re.compile(r"\n{2,}")
+_RE_PUNCT_NEWLINE = re.compile(r"(?<=[.!?;:,])\n")
+_RE_DOT_SPACE_DOT = re.compile(r"\.\s*\.")
 
 
 def normalize_symbols_for_tts(text: str) -> str:
@@ -107,45 +147,45 @@ def normalize_symbols_for_tts(text: str) -> str:
         return ""
 
     text = str(text)
-    text = re.sub("[   ]", " ", text)  # non-breaking / thin spaces
+    text = _RE_SPACES.sub(" ", text)  # non-breaking / thin spaces
     text = text.replace("\u2212", "-")  # minus sign
     text = text.replace("…", "...")  # ellipsis
     text = _normalize_temperature_ranges(text)
 
     # Temperatures with a number.  Do this before generic degree handling.
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*C\b", r"\1 degrees Celsius", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*F\b", r"\1 degrees Fahrenheit", text, flags=re.IGNORECASE)
+    text = _RE_TEMP_C_NUM.sub(r"\1 degrees Celsius", text)
+    text = _RE_TEMP_F_NUM.sub(r"\1 degrees Fahrenheit", text)
     # Bare units with no leading number ("measured in degrees C").
-    text = re.sub(r"°\s*C\b", "degrees Celsius", text, flags=re.IGNORECASE)
-    text = re.sub(r"°\s*F\b", "degrees Fahrenheit", text, flags=re.IGNORECASE)
+    text = _RE_TEMP_C_BARE.sub("degrees Celsius", text)
+    text = _RE_TEMP_F_BARE.sub("degrees Fahrenheit", text)
     # Any remaining degree symbol (angles, stray cases).
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°", r"\1 degrees", text)
+    text = _RE_TEMP_GENERIC.sub(r"\1 degrees", text)
     text = text.replace("°", " degrees")
 
     # Common weather/travel units.
-    text = re.sub(r"(?<=\d)\s*km\s*/\s*h\b", " kilometres per hour", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*km/h\b", " kilometres per hour", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*mm\b", " millimetres", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*cm\b", " centimetres", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*m\b", " metres", text, flags=re.IGNORECASE)
+    text = _RE_UNIT_KMH1.sub(" kilometres per hour", text)
+    text = _RE_UNIT_KMH2.sub(" kilometres per hour", text)
+    text = _RE_UNIT_MM.sub(" millimetres", text)
+    text = _RE_UNIT_CM.sub(" centimetres", text)
+    text = _RE_UNIT_M.sub(" metres", text)
 
     # Numeric rates only ("5/month" -> "5 per month").  Requiring digit-then-letter
     # keeps "and/or", "N/A", "TCP/IP" and dates like "2026/06" intact.
-    text = re.sub(r"(?<=\d)\s*/\s*(?=[A-Za-z])", " per ", text)
+    text = _RE_RATE_PER.sub(" per ", text)
 
     # Money and percentages.  The integer part must END in a digit so a trailing
     # comma ("A$50, ...") is not swallowed into the spoken amount.
-    text = re.sub(r"NZ\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 New Zealand dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"A\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 Australian dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"US\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 US dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"€\s*([\d,]*\d(?:\.\d+)?)", r"\1 euros", text)
-    text = re.sub(r"£\s*([\d,]*\d(?:\.\d+)?)", r"\1 pounds", text)
-    text = re.sub(r"\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 dollars", text)
-    text = re.sub(r"(?<=\d)\s*%", " percent", text)
+    text = _RE_MONEY_NZD.sub(r"\1 New Zealand dollars", text)
+    text = _RE_MONEY_AUD.sub(r"\1 Australian dollars", text)
+    text = _RE_MONEY_USD.sub(r"\1 US dollars", text)
+    text = _RE_MONEY_EUR.sub(r"\1 euros", text)
+    text = _RE_MONEY_GBP.sub(r"\1 pounds", text)
+    text = _RE_MONEY_GENERIC.sub(r"\1 dollars", text)
+    text = _RE_PERCENT.sub(" percent", text)
 
     # Operators and separators that commonly leak from formatted answers.
     text = text.replace("&", " and ")
-    text = re.sub("[•◦▪▫]", " ", text)  # bullet glyphs
+    text = _RE_BULLETS.sub(" ", text)  # bullet glyphs
     text = text.replace("→", " to ")  # ->
     text = text.replace("⇒", " to ")  # =>
     text = text.replace("≈", " about ")  # almost equal
@@ -201,11 +241,11 @@ def smooth_whitespace_for_tts(text: str) -> str:
     flush_pending()
 
     text = "\n".join(lines)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-    text = re.sub(r"([,.;:!?])([A-Za-z])", r"\1 \2", text)
-    text = re.sub(r"\.{4,}", "...", text)
+    text = _RE_NEWLINES_3.sub("\n\n", text)
+    text = _RE_SPACES_2.sub(" ", text)
+    text = _RE_SPACE_PUNCT.sub(r"\1", text)
+    text = _RE_PUNCT_LETTER.sub(r"\1 \2", text)
+    text = _RE_ELLIPSIS_4.sub("...", text)
     return text.strip()
 
 
@@ -250,11 +290,11 @@ def flatten_newlines_for_payload(text: str) -> str:
     """
     if not text:
         return ""
-    text = re.sub(r"\n{2,}", ". ", text)
-    text = re.sub(r"(?<=[.!?;:,])\n", " ", text)
+    text = _RE_NEWLINES_2.sub(". ", text)
+    text = _RE_PUNCT_NEWLINE.sub(" ", text)
     text = text.replace("\n", ". ")
-    text = re.sub(r"\.\s*\.", ".", text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = _RE_DOT_SPACE_DOT.sub(".", text)
+    text = _RE_SPACES_2.sub(" ", text)
     return text.strip()
 
 
