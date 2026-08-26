@@ -5594,6 +5594,12 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
     # Maximum length for session titles
     MAX_TITLE_LENGTH = 100
 
+    # ⚡ Bolt: Compile regexes for faster string sanitization and consolidate character removals
+    _TITLE_CONTROL_CHARS_RE = re.compile(
+        r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]'
+    )
+    _TITLE_WHITESPACE_RE = re.compile(r'\s+')
+
     @staticmethod
     def sanitize_title(title: Optional[str]) -> Optional[str]:
         """Validate and sanitize a session title.
@@ -5615,22 +5621,11 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
         # UTF-8 encode time) — scrub them like every other write path here.
         title = _sanitize_surrogates(title)
 
-        # Remove ASCII control characters (0x00-0x1F, 0x7F) but keep
-        # whitespace chars (\t=0x09, \n=0x0A, \r=0x0D) so they can be
-        # normalized to spaces by the whitespace collapsing step below
-        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', title)
-
-        # Remove problematic Unicode control characters:
-        # - Zero-width chars (U+200B-U+200F, U+FEFF)
-        # - Directional overrides (U+202A-U+202E, U+2066-U+2069)
-        # - Object replacement (U+FFFC), interlinear annotation (U+FFF9-U+FFFB)
-        cleaned = re.sub(
-            r'[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]',
-            '', cleaned,
-        )
+        # Remove ASCII and problematic Unicode control characters
+        cleaned = SessionDB._TITLE_CONTROL_CHARS_RE.sub('', title)
 
         # Collapse internal whitespace runs and strip
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = SessionDB._TITLE_WHITESPACE_RE.sub(' ', cleaned).strip()
 
         if not cleaned:
             return None
