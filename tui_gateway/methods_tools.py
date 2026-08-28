@@ -1886,6 +1886,7 @@ def _(rid, params: dict) -> dict:
         return _err(rid, 5001, "shell.exec unavailable: approval safety module not importable")
     try:
         from hermes_cli._subprocess_compat import windows_hide_flags
+        from tools.environments.local import build_subprocess_env
 
         r = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=30, cwd=os.getcwd(),
@@ -1893,6 +1894,7 @@ def _(rid, params: dict) -> dict:
             # the gateway thread on locale-mismatched Windows (#53137).
             encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,
+            env=build_subprocess_env(),
             creationflags=windows_hide_flags(),
         )
         return _ok(
