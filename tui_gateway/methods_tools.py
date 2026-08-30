@@ -1866,6 +1866,9 @@ def _(rid, params: dict) -> dict:
 
 @method("shell.exec")
 def _(rid, params: dict) -> dict:
+    from tools.environments.local import build_subprocess_env
+    env = build_subprocess_env()
+
     cmd = params.get("command", "")
     if not cmd:
         return _err(rid, 4004, "empty command")
@@ -1894,6 +1897,7 @@ def _(rid, params: dict) -> dict:
             encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,
             creationflags=windows_hide_flags(),
+            env=env,
         )
         return _ok(
             rid,
