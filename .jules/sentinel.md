@@ -1,0 +1,4 @@
+## 2026-08-30 - Prevent credential leakage in tui_gateway shell.exec
+**Vulnerability:** The `shell.exec` method in `tui_gateway/methods_tools.py` uses `subprocess.run` without explicitly sanitizing the environment variables, which can lead to credential leakage because the TUI server process runs with sensitive API keys in `os.environ`.
+**Learning:** In environments where sensitive API keys are injected into `os.environ`, it is critical to explicitly pass a sanitized environment to `subprocess.run` to prevent child processes from inheriting and potentially leaking these secrets. The `tui_gateway` context is particularly sensitive because it processes arbitrary shell commands.
+**Prevention:** Always explicitly set `env=build_subprocess_env()` when invoking `subprocess.run` in `tui_gateway` or similar services that manage untrusted commands or plugins, ensuring the default environment is sanitized of credentials before being passed down.
