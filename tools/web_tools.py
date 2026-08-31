@@ -628,6 +628,7 @@ _debug = DebugSession("web_tools", env_var="WEB_TOOLS_DEBUG")
 
 def _get_extract_char_limit() -> int:
     """Resolve the per-page char budget from config, clamped to a sane range."""
+
     try:
         configured = _load_web_config().get("extract_char_limit")
         if configured is not None:
@@ -1679,7 +1680,7 @@ registry.register(
     check_fn=check_web_api_key,
     requires_env=_web_requires_env(),
     emoji="🔍",
-    max_result_size_chars=100_000,
+    max_result_size_chars=250_000,
 )
 registry.register(
     name="web_extract",
@@ -1694,5 +1695,5 @@ registry.register(
     requires_env=_web_requires_env(),
     is_async=True,
     emoji="📄",
-    max_result_size_chars=100_000,
+    max_result_size_chars=250_000,
 )
