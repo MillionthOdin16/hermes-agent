@@ -1,0 +1,3 @@
+## 2024-03-20 - Added missing ARIA label to external link button in OAuthProvidersCard
+**Learning:** Found an icon-only button (`ExternalLink`) in the OAuthProvidersCard component that lacked an `aria-label`. The surrounding anchor tag had a `title` attribute, but screen readers may rely on `aria-label` directly on the `<Button>` component for proper context, especially since the button itself handles focus.
+**Action:** When adding icon-only buttons (`size="icon"`), always include an `aria-label` attribute on the `<Button>` component itself, even if it is wrapped in an anchor tag with a `title`.
