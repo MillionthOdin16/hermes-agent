@@ -8574,6 +8574,45 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 "telegram topic binding refresh failed (%s)", reason, exc_info=True,
             )
 
+    def _persist_gateway_session_rollover(
+        self,
+        *,
+        session_key: str | None,
+        source: SessionSource,
+        session_entry,
+        new_session_id: str,
+        reason: str,
+    ) -> bool:
+        """Persist all gateway state that follows a compression child session."""
+        old_session_id = getattr(session_entry, "session_id", None)
+        if not old_session_id or not new_session_id or old_session_id == new_session_id:
+            return False
+
+        session_entry.session_id = new_session_id
+        self.session_store._save()
+        self._sync_telegram_topic_binding(source, session_entry, reason=reason)
+
+        try:
+            from hermes_cli.goals import migrate_goal_session
+            migrate_goal_session(old_session_id, new_session_id, reason=reason)
+        except Exception:
+            logger.debug(
+                "goal migration failed during session rollover (%s): %s -> %s",
+                reason, old_session_id, new_session_id, exc_info=True,
+            )
+
+        _cache_lock = getattr(self, "_agent_cache_lock", None)
+        _cache = getattr(self, "_agent_cache", None)
+        if session_key and _cache_lock and _cache is not None:
+            with _cache_lock:
+                cached = _cache.get(session_key)
+                cached_agent = cached[0] if cached else None
+                cached_session_id = getattr(cached_agent, "session_id", None)
+                if cached_session_id and cached_session_id != new_session_id:
+                    _cache.pop(session_key, None)
+
+        return True
+
     def _recover_telegram_topic_thread_id(
         self,
         source: SessionSource,
@@ -22326,23 +22365,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # session_entry so transcript writes below go to the right session.
             if agent_result.get("session_id") and agent_result["session_id"] != session_entry.session_id:
                 if session_entry.session_id == _run_start_session_id:
-                    session_entry.session_id = agent_result["session_id"]
-                    # The held turn lease follows the rotation: the transcript
-                    # persistence below writes to the NEW id, so the
-                    # serialization boundary must move with it or an alias
-                    # key resolving the fresh child could interleave (#64934).
-                    self._rebind_turn_lease(
-                        _quick_key, run_generation, session_entry.session_id
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=session_entry,
+                        new_session_id=agent_result["session_id"],
+                        reason="agent-result-compression",
                     )
-                    await self.async_session_store._save()
-                    await self.async_session_store._record_gateway_session_peer(
+                    self.session_store._record_gateway_session_peer(
                         session_entry.session_id,
                         session_key,
                         source,
-                    )
-                    await asyncio.to_thread(
-                        self._sync_telegram_topic_binding,
-                        source, session_entry, reason="agent-result-compression",
                     )
                 else:
                     logger.info(
@@ -24690,6 +24723,24 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
 
 
+                # Re-append the verbatim tail after the compressed head,
+                # guarding the seam against illegal role adjacency.
+                if partial and tail:
+                    compressed = rejoin_compressed_head_and_tail(compressed, tail)
+
+                # _compress_context already calls end_session() on the old session
+                # (preserving its full transcript in SQLite) and creates a new
+                # session_id for the continuation.  Write the compressed messages
+                # into the NEW session so the original history stays searchable.
+                new_session_id = tmp_agent.session_id
+                if new_session_id != session_entry.session_id:
+                    self._persist_gateway_session_rollover(
+                        session_key=session_key,
+                        source=source,
+                        session_entry=session_entry,
+                        new_session_id=new_session_id,
+                        reason="compress-command",
+                    )
 
 
     async def _get_telegram_topic_capabilities(self, source: SessionSource) -> dict:
@@ -30782,7 +30833,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # executor call below is unchanged).  Its closed-over locals travel
         # on turn_ctx; `nonlocal message` rebinds became ctx.message writes.
         run_sync = turn_runner.run_sync
-        
         # Start progress message sender if enabled. Gate on needs_progress_queue
         # (tool_progress OR thinking_progress), not tool_progress alone: the
         # sender drains BOTH tool-progress lines and _thinking scratch bubbles.
