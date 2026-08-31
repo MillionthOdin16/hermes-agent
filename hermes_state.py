@@ -550,6 +550,12 @@ def _strip_background_review_harness(
 # Matches a bare protocol/tool-name marker such as "[memory]" or "[skill_manage]".
 _STALE_TOOL_CALL_MARKER_RE = re.compile(r"^\[[A-Za-z_][A-Za-z0-9_.-]*\]$")
 
+_SANITIZE_TITLE_CHARS_RE = re.compile(
+    r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f'
+    r'\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]'
+)
+_SANITIZE_TITLE_WHITESPACE_RE = re.compile(r'\s+')
+
 
 def _is_stale_tool_call_marker_message(msg: Dict[str, Any]) -> bool:
     """True when ``msg`` is a persisted assistant turn whose content is a bare
@@ -5617,20 +5623,13 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
 
         # Remove ASCII control characters (0x00-0x1F, 0x7F) but keep
         # whitespace chars (\t=0x09, \n=0x0A, \r=0x0D) so they can be
-        # normalized to spaces by the whitespace collapsing step below
-        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', title)
-
-        # Remove problematic Unicode control characters:
-        # - Zero-width chars (U+200B-U+200F, U+FEFF)
-        # - Directional overrides (U+202A-U+202E, U+2066-U+2069)
-        # - Object replacement (U+FFFC), interlinear annotation (U+FFF9-U+FFFB)
-        cleaned = re.sub(
-            r'[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]',
-            '', cleaned,
-        )
+        # normalized to spaces by the whitespace collapsing step below.
+        # Also remove problematic Unicode control characters.
+        # ⚡ Bolt: Consolidated and pre-compiled regexes for faster sanitization on hot paths.
+        cleaned = _SANITIZE_TITLE_CHARS_RE.sub('', title)
 
         # Collapse internal whitespace runs and strip
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = _SANITIZE_TITLE_WHITESPACE_RE.sub(' ', cleaned).strip()
 
         if not cleaned:
             return None
