@@ -2821,7 +2821,7 @@ def init_agent(
             abort_on_summary_failure=compression_abort_on_summary_failure,
             max_tokens=_compressor_max_tokens,
             model_thresholds=compression_model_thresholds,
-            threshold_tokens_cap=compression_threshold_tokens,
+            threshold_tokens_cap=compression_threshold_tokens_cap,
             proactive_prune_tokens=compression_proactive_prune_tokens,
             proactive_prune_min_result_chars=compression_proactive_prune_min_chars,
             proactive_prune_min_reclaim_tokens=compression_proactive_prune_min_reclaim,
