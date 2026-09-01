@@ -34,6 +34,12 @@ from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 
+# Compiled regexes for title sanitization
+_TITLE_CONTROL_CHARS_RE = re.compile(
+    r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]'
+)
+_TITLE_WHITESPACE_RE = re.compile(r'\s+')
+
 from agent.memory_manager import sanitize_context
 from agent.session_activity import ActivityProvenance
 from agent.message_sanitization import _sanitize_surrogates
@@ -8552,22 +8558,12 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
         # UTF-8 encode time) — scrub them like every other write path here.
         title = _sanitize_surrogates(title)
 
-        # Remove ASCII control characters (0x00-0x1F, 0x7F) but keep
-        # whitespace chars (\t=0x09, \n=0x0A, \r=0x0D) so they can be
-        # normalized to spaces by the whitespace collapsing step below
-        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', title)
-
-        # Remove problematic Unicode control characters:
-        # - Zero-width chars (U+200B-U+200F, U+FEFF)
-        # - Directional overrides (U+202A-U+202E, U+2066-U+2069)
-        # - Object replacement (U+FFFC), interlinear annotation (U+FFF9-U+FFFB)
-        cleaned = re.sub(
-            r'[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]',
-            '', cleaned,
-        )
+        # ⚡ Bolt: Consolidate multiple re.sub calls into pre-compiled regexes
+        # to avoid repeated C-to-Python context switches and parsing overhead during hot title sanitization.
+        cleaned = _TITLE_CONTROL_CHARS_RE.sub('', title)
 
         # Collapse internal whitespace runs and strip
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = _TITLE_WHITESPACE_RE.sub(' ', cleaned).strip()
 
         if not cleaned:
             return None
