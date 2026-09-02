@@ -1,0 +1,3 @@
+## 2026-09-02 - Consolidate Sequential Regex Replacements
+**Learning:** Sequential `re.sub` calls that strip out different sets of characters can be combined into a single character class regex. This avoids multiple passes over the string and reduces redundant string allocations, but pre-compiling by dynamically adding attributes to a method object (e.g., `SessionDB.sanitize_title._bad_chars_re`) is a Python anti-pattern that can cause runtime `AttributeError`s if the method is decorated (like `@staticmethod`).
+**Action:** Consolidate multiple stripping operations into a single regex pattern and rely on Python's internal `re` module cache rather than resorting to unsafe dynamic attribute assignments on method objects.
