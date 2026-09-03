@@ -2196,6 +2196,7 @@ def init_agent(
     compression_enabled = str(_compression_cfg.get("enabled", True)).lower() in {"true", "1", "yes"}
     compression_target_ratio = float(_compression_cfg.get("target_ratio", 0.20))
     compression_protect_last = int(_compression_cfg.get("protect_last_n", 20))
+    compression_threshold_tokens_cap = int(_compression_cfg.get("threshold_tokens_cap", 0))
     # Tail retention mode (compression.tail_mode). "lean" (default) keeps a
     # clamped 2.5%/10K-25K verbatim tail with recovery-pointer machinery —
     # continuity rides the upgraded summary (digests, anchor index, verbatim
