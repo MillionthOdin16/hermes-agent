@@ -10017,7 +10017,7 @@ class TelegramAdapter(BasePlatformAdapter):
         event.text = self._clean_bot_trigger_text(event.text)
         await self._cache_replied_media(msg, event)
         event = self._apply_telegram_group_observe_attribution(event)
-        self._enqueue_text_event(event)
+        await self._enqueue_text_event(event)
 
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming command messages through the split-text queue.
@@ -10109,7 +10109,7 @@ class TelegramAdapter(BasePlatformAdapter):
     # Text message aggregation (handles Telegram client-side splits)
     # ------------------------------------------------------------------
 
-    def _text_batch_key(self, event: MessageEvent) -> str:
+    async def _text_batch_key(self, event: MessageEvent) -> str:
         """Session-scoped key for text message batching.
 
         Applies the installed topic-recovery hook first so DM-topic batches
@@ -10117,7 +10117,7 @@ class TelegramAdapter(BasePlatformAdapter):
         raw inbound ``message_thread_id`` Telegram may have attached.
         """
         from gateway.session import build_session_key
-        self._apply_topic_recovery(event)
+        await asyncio.to_thread(self._apply_topic_recovery, event)
         return build_session_key(
             event.source,
             group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),
@@ -10125,7 +10125,7 @@ class TelegramAdapter(BasePlatformAdapter):
             profile=self._session_key_profile(event.source),
         )
 
-    def _enqueue_text_event(self, event: MessageEvent) -> None:
+    async def _enqueue_text_event(self, event: MessageEvent) -> None:
         """Buffer a text event and reset the flush timer.
 
         When Telegram splits a long user message into multiple updates,
@@ -10137,7 +10137,7 @@ class TelegramAdapter(BasePlatformAdapter):
             self._hold_inbound_event(event, where="text-enqueue")
             return
 
-        key = self._text_batch_key(event)
+        key = await self._text_batch_key(event)
         existing = self._pending_text_batches.get(key)
         chunk_len = len(event.text or "")
         if existing is None:
