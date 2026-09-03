@@ -146,6 +146,95 @@ def test_hard_stop_enabled_blocks_repeated_exact_failure_before_next_execution()
 
 
 
+def test_classify_tool_failure_detects_structured_json_errors():
+    """Structured JSON with explicit error+success=False returns the error message."""
+    cases = [
+        # tool, result_json, expected_failure, expected_suffix_substring
+        ("skill_view", json.dumps({"success": False, "error": "Skill 'X' not found."}), True, "Skill 'X' not found"),
+        ("skill_manage", json.dumps({"success": False, "message": "Skill 'bad' not installed."}), True, "bad"),
+        ("web_search", json.dumps({"success": False, "error": "API rate limit exceeded"}), True, "API rate limit"),
+        ("read_file", json.dumps({"success": False, "error": "File not found: /tmp/x.py"}), True, "File not found"),
+    ]
+    for tool, result, expected_failure, expected_sub in cases:
+        is_failure, suffix = classify_tool_failure(tool, result)
+        assert is_failure == expected_failure, f"{tool}: expected failure={expected_failure}, got {is_failure}"
+        assert expected_sub in suffix, f"{tool}: expected '{expected_sub}' in suffix, got '{suffix}'"
+
+
+def test_classify_tool_failure_does_not_flag_nested_error_strings():
+    """Tool outputs that happen to contain 'error' in content are not classified as failures."""
+    cases = [
+        ("web_search", json.dumps({"success": True, "output": "Search results for: error handling in python"})),
+        ("terminal", json.dumps({"exit_code": 0, "output": "Test 1: skipped, Test 2: passed"})),
+        ("skill_view", json.dumps({"success": True, "content": "# Error Handling Best Practices"})),
+        ("read_file", json.dumps({"success": True, "content": "def handle_error(): pass"})),
+    ]
+    for tool, result in cases:
+        is_failure, _ = classify_tool_failure(tool, result)
+        assert is_failure is False, f"{tool}: should not flag legitimate content containing 'error'"
+
+
+def test_classify_tool_failure_non_string_results_are_successes():
+    """Multimodal and other non-string results should not crash or be classified as failures."""
+    assert classify_tool_failure("vision_analyze", {"_multimodal": True, "data": "..."}) == (False, "")
+    assert classify_tool_failure("skill_view", [1, 2, 3]) == (False, "")
+    assert classify_tool_failure("terminal", 42) == (False, "")
+
+
+def test_classify_tool_failure_terminal_returns_specific_error_message():
+    """Terminal with exit_code != 0 and error message returns the error text."""
+    result = json.dumps({"exit_code": 1, "error": "Permission denied"})
+    is_failure, suffix = classify_tool_failure("terminal", result)
+    assert is_failure is True
+    assert "Permission denied" in suffix
+
+    # Without error field, just the exit code
+    result = json.dumps({"exit_code": 1})
+    is_failure, suffix = classify_tool_failure("terminal", result)
+    assert is_failure is True
+    assert "exit 1" in suffix
+
+    # Success exits
+    result = json.dumps({"exit_code": 0, "output": "done"})
+    assert classify_tool_failure("terminal", result) == (False, "")
+
+
+def test_classify_tool_failure_memory_full():
+    """Memory 'store full' is classified as failure with [full] tag."""
+    result = json.dumps({"success": False, "error": "exceed the limit of entries"})
+    is_failure, suffix = classify_tool_failure("memory", result)
+    assert is_failure is True
+    assert suffix == " [full]"
+
+    # Other memory errors are caught by generic heuristic
+    result = json.dumps({"success": False, "error": "connection refused"})
+    is_failure, suffix = classify_tool_failure("memory", result)
+    assert is_failure is True
+
+
+def test_classify_tool_failure_none_result_is_not_failure():
+    """None results (unknown) are not classified as failures."""
+    assert classify_tool_failure("skill_view", None) == (False, "")
+
+
+def test_same_tool_varying_args_warns_by_default_without_halting():
+    controller = ToolCallGuardrailController(
+        ToolCallGuardrailConfig(same_tool_failure_warn_after=2, same_tool_failure_halt_after=3)
+    )
+
+    first = controller.after_call("terminal", {"command": "cmd-1"}, '{"exit_code":1}', failed=True)
+    second = controller.after_call("terminal", {"command": "cmd-2"}, '{"exit_code":1}', failed=True)
+    third = controller.after_call("terminal", {"command": "cmd-3"}, '{"exit_code":1}', failed=True)
+    fourth = controller.after_call("terminal", {"command": "cmd-4"}, '{"exit_code":1}', failed=True)
+
+    assert first.action == "allow"
+    assert [second.action, third.action, fourth.action] == ["warn", "warn", "warn"]
+    assert {second.code, third.code, fourth.code} == {"same_tool_failure_warning"}
+    assert "Do not switch to text-only replies" in second.message
+    assert "keep using tools" in second.message
+    assert "diagnose before retrying" in second.message
+    assert "different tool" in second.message
+    assert controller.halt_decision is None
 
 
 
