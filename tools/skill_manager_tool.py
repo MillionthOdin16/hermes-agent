@@ -883,6 +883,87 @@ def _find_skill_in_other_profiles(name: str) -> List[Tuple[str, Path]]:
     return matches
 
 
+def _list_all_skill_names() -> List[str]:
+    """Return every discoverable skill name in the active profile.
+
+    Used by ``_find_skill_name_suggestions`` to build the "did you mean?"
+    list shown when a caller passes a misspelled or mis-cased name. Names
+    come from frontmatter ``name:`` (authoritative) plus bare directory
+    names as a fallback for skills with empty frontmatter.
+    """
+    try:
+        from agent.skill_utils import get_all_skills_dirs
+        from tools.skills_tool import _build_frontmatter_index
+    except Exception:
+        return []
+    names: set = set()
+    try:
+        for fm_name, candidates in _build_frontmatter_index(get_all_skills_dirs()).items():
+            if fm_name:
+                names.add(fm_name)
+    except Exception:
+        logger.debug("frontmatter index build failed", exc_info=True)
+    # Bare directory names (handles skills without a frontmatter name).
+    try:
+        from agent.skill_utils import is_excluded_skill_path
+        for skills_dir in get_all_skills_dirs():
+            if not skills_dir.exists():
+                continue
+            for skill_md in skills_dir.rglob("SKILL.md"):
+                if is_excluded_skill_path(skill_md):
+                    continue
+                names.add(skill_md.parent.name)
+    except Exception:
+        logger.debug("directory scan for skill names failed", exc_info=True)
+    return sorted(names)
+
+
+def _find_skill_name_suggestions(name: str, limit: int = 3) -> List[str]:
+    """Return up to ``limit`` closest known skill names to ``name``.
+
+    Handles two common caller mistakes that were producing silent
+    "not found" errors in production (root cause of the May-July 2026
+    ``skill_manage`` error cluster):
+
+      * passing a ``category/name`` path (``fitness/google-health-api``)
+        when the frontmatter name is just ``google-health-api`` — the
+        right-hand side resolves cleanly so it ranks first;
+      * passing ``category:name`` (colon variant) or a misspelled name
+        (``skill-curator`` vs ``meta/skill-curator``) — fuzzymatch via
+        ``difflib`` over the full known-skill set.
+
+    The returned list is ordered: exact substring matches of the
+    tail, then closest ``difflib`` matches. Empty when no candidate
+    scores above the floor or when discovery fails (fail-quiet).
+    """
+    import difflib
+    candidates = _list_all_skill_names()
+    if not candidates:
+        return []
+
+    # 1. If the caller used a "category/name" or "category:name" path,
+    #    the bare tail is almost always what they meant.
+    tail: Optional[str] = None
+    for sep in ("/", ":"):
+        if sep in name:
+            tail = name.rsplit(sep, 1)[-1].strip()
+            if tail and tail in candidates:
+                return [tail]
+            break
+
+    # 2. Substring/case-insensitive prefix boost, then difflib close-match.
+    lowered = name.lower()
+    substring_hits = sorted(
+        {c for c in candidates if lowered in c.lower()},
+        key=lambda c: (len(c), c),
+    )
+    if substring_hits:
+        return substring_hits[:limit]
+
+    close = difflib.get_close_matches(name, candidates, n=limit, cutoff=0.6)
+    return close
+
+
 def _skill_not_found_error(name: str, suffix: str = "") -> str:
     """Build a "skill not found" error that names other profiles holding
     the same skill, so the agent can recognize a profile-scoping mistake.
@@ -912,7 +993,15 @@ def _skill_not_found_error(name: str, suffix: str = "") -> str:
                 f"edit the files directly (file tools / terminal)."
             )
     else:
-        base += " Use skills_list() to see available skills."
+        # "Did you mean ...?" — helps with category/name typos and
+        # close-misses. Falls back to the original skills_list() hint
+        # when nothing scores above the floor.
+        suggestions = _find_skill_name_suggestions(name)
+        if suggestions:
+            quoted = ", ".join(f"'{s}'" for s in suggestions)
+            base += f" Did you mean {quoted}? Use skills_list() to see all."
+        else:
+            base += " Use skills_list() to see available skills."
 
     if suffix:
         base += suffix
