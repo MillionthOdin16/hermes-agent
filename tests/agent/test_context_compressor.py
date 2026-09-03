@@ -1665,6 +1665,39 @@ class TestCompressWithClient:
             "respond to the message below, not the summary above ---"
         )
 
+    def test_summary_contains_deterministic_continuity_anchor(self):
+        """The compressed checkpoint should preserve fresh tail context
+        outside the auxiliary summarizer's generated prose."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "summary text"
+
+        with patch("agent.context_compressor.get_model_context_length", return_value=100000):
+            c = ContextCompressor(model="test", quiet_mode=True, protect_first_n=2, protect_last_n=3)
+
+        msgs = [
+            {"role": "user", "content": "old task"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "middle 1"},
+            {"role": "assistant", "content": "middle 2"},
+            {"role": "tool", "tool_call_id": "call_1", "content": "D:/models/router/model.gguf exists"},
+            {"role": "user", "content": "What VMS?. There are no VMS. Check the error logs on desktop"},
+            {"role": "assistant", "content": "I'll check the logs now."},
+            {"role": "tool", "tool_call_id": "call_2", "content": "errors.log: context window exceeds limit"},
+        ]
+
+        with patch("agent.context_compressor.call_llm", return_value=mock_response):
+            result = c.compress(msgs)
+
+        summary_text = "\n".join(
+            str(m.get("content") or "")
+            for m in result
+            if SUMMARY_PREFIX in str(m.get("content") or "")
+        )
+        assert "Current Continuity Anchor" in summary_text
+        assert "What VMS?. There are no VMS. Check the error logs on desktop" in summary_text
+        assert "errors.log: context window exceeds limit" in summary_text
+
     def test_summary_role_avoids_consecutive_user_messages(self):
         """Summary role should alternate with the last head message to avoid consecutive same-role messages."""
         mock_client = MagicMock()
@@ -1858,6 +1891,30 @@ class TestSummaryTargetRatio:
         assert c.threshold_tokens == 75_000
 
 
+    def test_threshold_tokens_cap_applies_on_initial_construction(self):
+        """Configured caps must apply before any model switch/update occurs."""
+        with patch("agent.context_compressor.get_model_context_length", return_value=1_000_000):
+            c = ContextCompressor(
+                model="test",
+                quiet_mode=True,
+                threshold_percent=0.88,
+                threshold_tokens_cap=250_000,
+                summary_target_ratio=0.20,
+                tail_mode="legacy",  # use legacy formula so tail = threshold * ratio
+            )
+            # Round-8 refinement: force deferred context_length resolution
+            # before asserting threshold_tokens. The cap is applied lazily
+            # at first .context_length access (Round-7 deferred probe).
+            _ = c.context_length
+
+        assert c.threshold_tokens == 250_000
+        assert c.tail_token_budget == 50_000
+
+    def test_default_protect_last_n_is_20(self):
+        """Default protect_last_n should be 20."""
+        with patch("agent.context_compressor.get_model_context_length", return_value=100_000):
+            c = ContextCompressor(model="test", quiet_mode=True)
+        assert c.protect_last_n == 20
 
 
 
@@ -2005,6 +2062,22 @@ class TestTokenBudgetTailProtection:
         # Should have compressed (fewer messages than original)
         assert len(result) < len(messages)
 
+
+    def test_dedupe_duplicate_tool_results_keeps_newest_full_copy(self, budget_compressor):
+        """Exact repeated tool outputs should keep only the newest full payload."""
+        c = budget_compressor
+        duplicate = "same large output\n" + "x" * 5000
+        messages = [
+            {"role": "tool", "content": duplicate, "tool_call_id": "old"},
+            {"role": "assistant", "content": "middle"},
+            {"role": "tool", "content": duplicate, "tool_call_id": "new"},
+        ]
+
+        result, pruned = c.dedupe_duplicate_tool_results(messages)
+
+        assert pruned == 1
+        assert result[0]["content"].startswith("[Duplicate tool output")
+        assert result[2]["content"] == duplicate
 
     def test_prune_short_conv_protects_entire_tail(self, budget_compressor):
         """Regression guard for PR #17025.
