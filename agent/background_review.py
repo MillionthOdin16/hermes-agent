@@ -1594,6 +1594,7 @@ def _run_review_in_thread(
                 if configured_extra_tools
                 else ""
             )
+            allowed_tools_text = ", ".join(sorted(review_whitelist))
             set_thread_tool_whitelist(
                 review_whitelist,
                 deny_msg_fmt=(
@@ -1615,6 +1616,26 @@ def _run_review_in_thread(
             try:
                 request_admitted = (
                     review_run is None or review_run.begin_request(review_agent)
+                )
+                # Routed to a different model -> replay a digest (cache is cold
+                # on that model anyway, so minimise cold-written tokens). Same
+                # model -> replay the full snapshot (warm cache reads).
+                _review_history = (
+                    _digest_history(messages_snapshot) if _routed
+                    else messages_snapshot
+                )
+                review_agent.run_conversation(
+                    user_message=(
+                        prompt
+                        + "\n\nAllowed tools: "
+                        + allowed_tools_text
+                        + "\n\nOnly use the allowed memory and skill "
+                        "management tools above. Do not call read_file, "
+                        "search_files, patch, write_file, terminal, process, "
+                        "web_search, execute_code, delegate_task, or any "
+                        "other tool; those are denied at runtime."
+                    ),
+                    conversation_history=_review_history,
                 )
                 if request_admitted:
                     # Routed to a different model -> replay a digest (cache is cold
