@@ -208,6 +208,13 @@ class GatewaySlashCommandsMixin:
                     )
         self._evict_cached_agent(session_key)
 
+        # /new preserves the session-scoped model override (it's a conversation
+        # boundary, not a model switch). Capture it BEFORE the funnel clear
+        # so we can restore it after the async_session_store reset.
+        retained_model_override = self._session_model_overrides.get(session_key)
+        if retained_model_override is not None:
+            retained_model_override = dict(retained_model_override)
+
         # Conversation boundary: clear ALL conversation-scoped per-session
         # state (model/reasoning overrides, one-turn restores, model notes,
         # last-resolved cache, /queue overflow) + security state in one
@@ -247,8 +254,16 @@ class GatewaySlashCommandsMixin:
         # Reset the session
         new_entry = await self.async_session_store.reset_session(session_key)
 
-        # (Conversation-scoped overrides + security state were already
-        # cleared via _clear_conversation_scope above.)
+        # /new is a conversation boundary, not a model switch. Keep the current
+        # session model so the new agent starts with the model the user selected.
+        # (Note: _clear_conversation_scope above already cleared reasoning,
+        # model notes, last-resolved-model cache, and session-boundary
+        # security state via _CONVERSATION_SCOPED_STATE funnel — only the
+        # model override is preserved here because /new is not a model switch.)
+        if retained_model_override is not None:
+            self._session_model_overrides[session_key] = retained_model_override
+        else:
+            self._session_model_overrides.pop(session_key, None)
 
         _old_sid = old_entry.session_id if old_entry else None
 
