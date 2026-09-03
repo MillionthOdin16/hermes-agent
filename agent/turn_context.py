@@ -569,6 +569,30 @@ class TurnContext:
     preflight_compression_blocked: bool = False
 
 
+_GOAL_CONTINUATION_PREFIXES = (
+    "[Continuing toward your standing goal]\nGoal:",
+    "[system] [Continuing toward your standing goal]\nGoal:",
+)
+
+
+def _compact_goal_continuation_for_persistence(user_message: Any) -> Optional[str]:
+    """Return a compact transcript marker for synthetic goal continuations.
+
+    The full continuation prompt can include the entire goal, checklist, judge
+    feedback, and evidence instructions.  It must reach the model for the
+    current turn, but persisting it verbatim makes every future request replay
+    old scaffolding that no longer contains user intent.  Store a short marker
+    instead so long-running goals keep their working history without compounding
+    continuation boilerplate across turns.
+    """
+    if not isinstance(user_message, str):
+        return None
+    normalized = user_message.strip()
+    if not any(normalized.startswith(prefix) for prefix in _GOAL_CONTINUATION_PREFIXES):
+        return None
+    return "[system] [Continuing toward your standing goal]"
+
+
 def build_turn_context(
     agent,
     user_message: Any,
@@ -697,7 +721,10 @@ def build_turn_context(
     # Store stream callback for _interruptible_api_call to pick up.
     agent._stream_callback = stream_callback
     agent._persist_user_message_idx = None
-    agent._persist_user_message_override = persist_user_message
+    _persistence_user_message = persist_user_message
+    if _persistence_user_message is None:
+        _persistence_user_message = _compact_goal_continuation_for_persistence(user_message)
+    agent._persist_user_message_override = _persistence_user_message
     agent._persist_user_message_timestamp = persist_user_timestamp
     agent._persist_user_message_platform_id = persist_user_platform_id
     # Generate unique task_id if not provided to isolate VMs between tasks.
