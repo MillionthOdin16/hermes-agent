@@ -89,6 +89,17 @@ DEFAULT_GATE_TIMEOUT_SECONDS = 300
 DEFAULT_GATE_MAX_RETRIES = 3
 # Bounded tail of a failed gate's combined stdout/stderr fed back to the agent.
 _GATE_OUTPUT_TAIL_CHARS = 3000
+# Bound the Phase-B judge tool loop: if the judge keeps calling read_file
+# without ever emitting a verdict, cap it so we don't burn the model's budget.
+DEFAULT_MAX_JUDGE_TOOL_CALLS = 5
+# Cap a single read_file response so a judge that tries to read 100k lines
+# doesn't blow up its own context. Judge can paginate if needed.
+_JUDGE_READ_FILE_MAX_LINES = 400
+_JUDGE_READ_FILE_MAX_CHARS = 32_000
+_CONTINUATION_GOAL_MAX_CHARS = 4000
+_CONTINUATION_CHECKLIST_MAX_CHARS = 8000
+_CONTINUATION_FEEDBACK_MAX_CHARS = 4000
+_CONTINUATION_SUBGOALS_MAX_CHARS = 4000
 
 
 CONTINUATION_PROMPT_TEMPLATE = (
@@ -116,11 +127,64 @@ CONTINUATION_PROMPT_WITH_CONTRACT_TEMPLATE = (
     "user input, say so clearly and stop."
 )
 
-# Used when the user has added one or more /subgoal criteria. Surfaced
-# to the agent verbatim so it sees what to target on the next turn,
-# and surfaced to the judge so the verdict considers them too.
 CONTINUATION_PROMPT_WITH_SUBGOALS_TEMPLATE = (
     "[Continuing toward your standing goal]\n"
+    "Goal: {goal}\n\n"
+    "Subgoals:\n"
+    "{subgoals_block}\n\n"
+    "Continue working toward the subgoals above. Take the next concrete step. "
+    "If you are blocked and need input from the user, say so clearly and stop.\n\n"
+    f"{_STRUCTURED_COMPLETION_INSTRUCTION}"
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Continuation planner (Phase-C)
+# ──────────────────────────────────────────────────────────────────────
+
+# The planner is an optional lightweight LLM call that generates a focused
+# next-step instruction for the agent, replacing the generic "continue
+# working" template.  It sees the goal, checklist state with evidence,
+# the agent's last response, and remaining turn budget.  Its output is a
+# single concrete instruction — not JSON, not a plan, just "here's what
+# to do next."
+#
+# Design invariants:
+# - Fail-open: any planner failure falls back to the existing template.
+# - Cheap: max_tokens=300, no tools, 15s timeout.
+# - Standalone: same pattern as decompose_goal() / judge_goal_freeform().
+# - The output is injected verbatim as a user-role message.  The
+#   ``[Continuing toward your standing goal]`` prefix is preserved because
+#   the gateway uses it to detect goal continuation events.
+
+DEFAULT_PLANNER_TIMEOUT = 15.0
+_PLANNER_MAX_RESPONSE_CHARS = 500
+
+CONTINUATION_PLANNER_SYSTEM_PROMPT = (
+    "You are a task planner for an autonomous agent working toward a goal. "
+    "Given the goal, a checklist of completion criteria with their current "
+    "status and evidence, the agent's most recent output, and any blocking "
+    "judge feedback, produce ONE focused instruction for the agent's next turn.\n\n"
+    "Rules:\n"
+    "- When blocking judge feedback is present, prioritize resolving that "
+    "feedback before proposing unrelated next steps.\n"
+    "- Identify the single most important pending item to work on next.\n"
+    "- If the last response shows partial progress on a specific item, focus "
+    "on completing that item rather than jumping to a new one.\n"
+    "- Reference completed items briefly to establish context but do not "
+    "repeat work already done.\n"
+    "- If items have logical dependencies, respect them (e.g. do not suggest "
+    "deploying before building). The checklist is flat — you infer ordering.\n"
+    "- If the agent appears stuck (same item pending with no progress across "
+    "multiple turns, or evidence shows repeated failed approaches), suggest "
+    "a different approach.\n"
+    "- If all items are terminal, say so — the goal should be done.\n"
+    "- Keep the instruction to 2-3 sentences. Be specific and actionable.\n"
+    "- Do NOT include JSON, markdown formatting, code blocks, or "
+    "meta-commentary. Output only the plain-text instruction."
+)
+
+CONTINUATION_PLANNER_USER_TEMPLATE = (
     "Goal: {goal}\n\n"
     "Additional criteria the user added mid-loop:\n"
     "{subgoals_block}\n\n"
@@ -935,6 +999,34 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "… [truncated]"
+
+
+def _truncate_head_tail(text: str, limit: int, *, label: str = "text") -> str:
+    """Bound long text while preserving both the opening and final details."""
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    marker = (
+        f"\n... [middle of {label} truncated; full value remains stored in "
+        "goal state and available through /goal trace] ...\n"
+    )
+    if limit <= len(marker) + 40:
+        return _truncate(text, limit)
+    remaining = limit - len(marker)
+    head_len = remaining // 2
+    tail_len = remaining - head_len
+    return f"{text[:head_len]}{marker}{text[-tail_len:]}"
+
+
+def _bounded_continuation_text(text: str, limit: int, *, label: str) -> str:
+    """Bound synthetic continuation prompt fields without mutating goal state."""
+    return _truncate_head_tail(str(text or ""), limit, label=label)
+
+
+# ---------------------------------------------------------------------------
+# M8: Event log helpers
+# ---------------------------------------------------------------------------
 
 
 def _pid_alive(pid: int) -> bool:
@@ -2154,12 +2246,43 @@ class GoalManager:
                 goal=self._state.goal,
                 contract_block=contract_block,
             )
+        goal_for_prompt = _bounded_continuation_text(
+            self._state.goal,
+            _CONTINUATION_GOAL_MAX_CHARS,
+            label="goal",
+        )
         if self._state.subgoals:
             return CONTINUATION_PROMPT_WITH_SUBGOALS_TEMPLATE.format(
-                goal=self._state.goal,
-                subgoals_block=self._state.render_subgoals_block(),
+                goal=goal_for_prompt,
+                subgoals_block=_bounded_continuation_text(
+                    self._state.render_subgoals_block(),
+                    _CONTINUATION_SUBGOALS_MAX_CHARS,
+                    label="subgoals",
+                ),
             )
-        return CONTINUATION_PROMPT_TEMPLATE.format(goal=self._state.goal)
+        if self._state.checklist:
+            done, total, _impossible, _pending = self._state.checklist_counts()
+            feedback_block = _bounded_continuation_text(
+                self._state.render_feedback_block(),
+                _CONTINUATION_FEEDBACK_MAX_CHARS,
+                label="goal feedback",
+            )
+            return CONTINUATION_PROMPT_WITH_CHECKLIST_TEMPLATE.format(
+                goal=goal_for_prompt,
+                session_id=self.session_id,
+                done=done,
+                total=total,
+                checklist=_bounded_continuation_text(
+                    self._state.render_checklist(numbered=False),
+                    _CONTINUATION_CHECKLIST_MAX_CHARS,
+                    label="checklist",
+                ),
+                feedback_block=feedback_block,
+            )
+        return CONTINUATION_PROMPT_TEMPLATE.format(
+            goal=goal_for_prompt,
+            session_id=self.session_id,
+        )
 
     def render_contract(self) -> str:
         """Public helper for the /goal show + /goal draft slash commands."""
