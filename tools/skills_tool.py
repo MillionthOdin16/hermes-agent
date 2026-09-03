@@ -78,6 +78,12 @@ from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Dict, Any, List, Optional, Set, Tuple
 
+# Module-level caches for skill resolution performance.
+# _skills_list_cache: (timestamp, skills_list_result) — 5 minute TTL
+# _frontmatter_name_index: Dict[skill_dir, Dict[name, (skill_dir, skill_md)]] — built lazily per scan_dir
+_SKILLS_LIST_CACHE_TTL = 300  # 5 minutes
+_skills_list_cache: Optional[Tuple[float, List[Dict[str, Any]]]] = None
+
 from tools.registry import registry, tool_error
 from hermes_cli.config import cfg_get
 from utils import env_var_enabled
@@ -135,6 +141,12 @@ def _skills_scan_signature(dirs_to_scan, disabled) -> tuple:
             pass
         sig.append((str(d), m))
     return (tuple(sig), frozenset(disabled), platform)
+
+
+# Frontmatter name index cache: Dict[scan_dir, Dict[fm_name, [(skill_dir, skill_md, fm_dict), ...]]]
+# Built lazily by _build_frontmatter_index(), invalidated on skill changes.
+_frontmatter_name_index: Dict[Path, Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]]] = {}
+_fm_index_built: set = set()
 
 
 # All skills live in ~/.hermes/skills/ (seeded from bundled skills/ on install).
@@ -684,6 +696,80 @@ def _is_skill_disabled(name: str, platform: str = None) -> bool:
         return False
 
 
+def _get_cached_skills_list() -> Optional[List[Dict[str, Any]]]:
+    """Return cached skills list if fresh, else None. TTL: _SKILLS_LIST_CACHE_TTL seconds."""
+    global _skills_list_cache
+    if _skills_list_cache is None:
+        return None
+    timestamp, skills = _skills_list_cache
+    if time.monotonic() - timestamp < _SKILLS_LIST_CACHE_TTL:
+        return skills
+    return None
+
+
+def _set_cached_skills_list(skills: List[Dict[str, Any]]) -> None:
+    """Store skills list in cache with current timestamp."""
+    global _skills_list_cache
+    _skills_list_cache = (time.monotonic(), skills)
+
+
+def _invalidate_skills_list_cache() -> None:
+    """Clear the skills list cache. Call after patch application."""
+    global _skills_list_cache
+    _skills_list_cache = None
+
+
+def _build_frontmatter_index(scan_dirs: List[Path]) -> Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]]:
+    """
+    Build a frontmatter name index across all scan_dirs.
+
+    Returns Dict[fm_name, [(skill_dir, skill_md, fm_dict), ...]].
+    Each frontmatter name maps to ALL matching skills (collision preserved).
+    Local ~/.hermes/skills/ is indexed first; external dirs append for collisions.
+    Uses a per-scan_dir cache so repeated lookups don't re-scan the filesystem.
+    """
+    from agent.skill_utils import iter_skill_index_files
+
+    full_index: Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]] = {}
+    for scan_dir in scan_dirs:
+        if scan_dir in _fm_index_built and scan_dir in _frontmatter_name_index:
+            for fm_name, entries in _frontmatter_name_index[scan_dir].items():
+                if fm_name not in full_index:
+                    full_index[fm_name] = list(entries)
+                else:
+                    full_index[fm_name].extend(list(entries))
+            continue
+
+        dir_index: Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]] = {}
+        for smd in iter_skill_index_files(scan_dir, "SKILL.md"):
+            try:
+                fm_content = smd.read_text(encoding="utf-8")[:512]
+                fm, _ = _parse_frontmatter(fm_content)
+                fm_name = fm.get("name", "")
+                if not fm_name:
+                    continue
+                entry = (smd.parent, smd, fm)
+                if fm_name not in dir_index:
+                    dir_index[fm_name] = []
+                dir_index[fm_name].append(entry)
+            except Exception:
+                continue
+        _frontmatter_name_index[scan_dir] = dir_index
+        _fm_index_built.add(scan_dir)
+        for fm_name, entries in dir_index.items():
+            if fm_name not in full_index:
+                full_index[fm_name] = list(entries)
+            else:
+                full_index[fm_name].extend(list(entries))
+    return full_index
+
+
+def _invalidate_frontmatter_index() -> None:
+    """Clear the frontmatter index cache. Call after skill creation/deletion."""
+    _frontmatter_name_index.clear()
+    _fm_index_built.clear()
+
+
 def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
     """Recursively find all skills in ~/.hermes/skills/ and external dirs.
 
@@ -834,8 +920,17 @@ def skills_list(category: str = None, task_id: str = None) -> str:
         if not active_skills_dir.exists():
             active_skills_dir.mkdir(parents=True, exist_ok=True)
 
-        # Find all skills
-        all_skills = _find_all_skills()
+        # Use cached result when possible (5-minute TTL, default skip_disabled=True path only)
+        if category is None:
+            cached = _get_cached_skills_list()
+            if cached is not None:
+                all_skills = cached
+            else:
+                all_skills = _find_all_skills()
+                _set_cached_skills_list(all_skills)
+        else:
+            # Category filter — always scan fresh (category changes cache key)
+            all_skills = _find_all_skills()
         try:
             from hermes_cli.plugins import discover_plugins, get_plugin_manager
 
@@ -889,6 +984,54 @@ def skills_list(category: str = None, task_id: str = None) -> str:
 
 
 # ── Plugin skill serving ──────────────────────────────────────────────────
+
+MAX_SKILL_VIEW_CONTENT_CHARS = 32_000
+MAX_SKILL_VIEW_FILE_CHARS = 50_000
+
+
+def _truncate_head_tail(text: str, max_chars: int, *, label: str) -> str:
+    """Bound large skill payloads while preserving frontmatter and final notes."""
+    if len(text) <= max_chars:
+        return text
+    marker = (
+        f"\n\n[... middle of {label} truncated by skill_view; "
+        "request a specific linked file_path for more detail, or set "
+        "HERMES_SKILL_VIEW_FULL_CONTENT=1 to disable this cap ...]\n\n"
+    )
+    if max_chars <= len(marker) + 40:
+        return text[:max_chars]
+    remaining = max_chars - len(marker)
+    head_chars = remaining // 2
+    tail_chars = remaining - head_chars
+    return f"{text[:head_chars]}{marker}{text[-tail_chars:]}"
+
+
+def _maybe_bound_skill_view_content(
+    content: str,
+    *,
+    max_chars: int,
+    label: str,
+) -> tuple[str, Dict[str, Any]]:
+    """Return bounded content plus response metadata for skill_view callers."""
+    original_chars = len(content)
+    base_meta = {
+        "content_original_chars": original_chars,
+        "content_returned_chars": original_chars,
+    }
+    if env_var_enabled("HERMES_SKILL_VIEW_FULL_CONTENT") or original_chars <= max_chars:
+        return content, {"content_truncated": False, **base_meta}
+    bounded = _truncate_head_tail(content, max_chars, label=label)
+    return bounded, {
+        "content_truncated": True,
+        "content_original_chars": original_chars,
+        "content_returned_chars": len(bounded),
+        "truncation_hint": (
+            "skill_view returned a bounded head/tail excerpt to avoid inflating "
+            "future requests. Use skill_view(name, file_path=...) for linked "
+            "files or HERMES_SKILL_VIEW_FULL_CONTENT=1 when the full SKILL.md "
+            "must be loaded in one result."
+        ),
+    }
 
 
 def _serve_plugin_skill(
@@ -1367,28 +1510,28 @@ def skill_view(
                 candidates = project_candidates
 
         if len(candidates) > 1:
-            paths = [str(smd) for _, smd in candidates]
-            logging.getLogger(__name__).warning(
-                "Skill name collision for '%s': %d candidates — %s",
-                name, len(candidates), "; ".join(paths),
+            # Rank candidates by structural quality and pick the best.
+            # Priority: has skill_dir > local > SKILL.md > shorter path.
+            scored = []
+            for sd, smd in candidates:
+                dir_score = 3 if sd else 0          # has directory = better
+                try:
+                    smd.resolve().relative_to(all_dirs[0])
+                    local_score = 2                   # local beats external
+                except ValueError:
+                    local_score = 0
+                type_score = 1 if smd.name == "SKILL.md" else 0  # SKILL.md > flat .md
+                depth_score = -len(smd.parts)          # fewer segments = better
+                total = dir_score + local_score + type_score + depth_score
+                scored.append((total, sd, smd))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            best_total, best_sd, best_smd = scored[0]
+            logger.warning(
+                "Skill name collision for '%s': %d candidates — picked %s (score=%d)",
+                name, len(candidates), best_smd, best_total,
             )
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": (
-                        f"Ambiguous skill name '{name}': {len(candidates)} skills "
-                        "match across your local skills dir and external_dirs. "
-                        "Refusing to guess — load one explicitly by its categorized path."
-                    ),
-                    "matches": paths,
-                    "hint": (
-                        "Pass the full relative path instead of the bare name "
-                        "(e.g., 'category/skill-name'), or rename one of the "
-                        "colliding skills so each name is unique."
-                    ),
-                },
-                ensure_ascii=False,
-            )
+            logger.warning("Other candidates: %s", [str(s) for _, _, s in scored[1:]])
+            candidates = [(best_sd, best_smd)]
 
         if candidates:
             skill_dir, skill_md = candidates[0]
@@ -1429,6 +1572,33 @@ def skill_view(
                     },
                     ensure_ascii=False,
                 )
+
+        # Strategy 2b (fallback): match by frontmatter name.
+        # Only runs when all fast strategies failed. Bridges the gap between
+        # _find_all_skills (resolves by frontmatter name) and skill_view
+        # (resolves by filesystem name). Caches the index per scan_dir.
+        if not skill_md:
+            for search_dir in all_dirs:
+                if search_dir not in _frontmatter_name_index:
+                    index: Dict[str, List[Tuple[Path, Path, Dict[str, Any]]]] = {}
+                    for fm_skill_md in iter_skill_index_files(search_dir, "SKILL.md"):
+                        try:
+                            fm_content = fm_skill_md.read_text(encoding="utf-8")[:512]
+                            fm, _ = _parse_frontmatter(fm_content)
+                            fm_name = fm.get("name", "")
+                            if fm_name and fm_name not in index:
+                                index[fm_name] = [(fm_skill_md.parent, fm_skill_md, fm)]
+                        except Exception:
+                            continue
+                    _frontmatter_name_index[search_dir] = index
+                fm_index = _frontmatter_name_index[search_dir]
+                if name in fm_index:
+                    skill_dir, skill_md, _fm = fm_index[name][0]
+                    logger.info(
+                        "Skill '%s' resolved via frontmatter name index: %s",
+                        name, skill_md,
+                    )
+                    break
 
         if not skill_md or not skill_md.exists():
             available = [s["name"] for s in _sort_skills(_find_all_skills())[:20]]
