@@ -186,6 +186,63 @@ def test_read_file_registers_background_review_read_mark(tmp_path):
     finally:
         reset_current_write_origin(token)
 
+def test_background_review_prompt_names_allowed_tools():
+    """The fork prompt should tell the model the exact permitted tools.
+
+    Runtime denial remains the safety backstop, but the model should not be
+    left to infer that read_file/search_files/patch are unavailable.
+    """
+    import run_agent
+
+    agent = _make_agent_stub(run_agent.AIAgent)
+    captured = {}
+
+    def _no_init(self, *args, **kwargs):
+        return None
+
+    def _capture_run(self, *, user_message, conversation_history):
+        captured["user_message"] = user_message
+
+    with patch.object(run_agent.AIAgent, "__init__", _no_init), \
+         patch.object(run_agent.AIAgent, "run_conversation", _capture_run), \
+         patch("threading.Thread", _SyncThread):
+        agent._spawn_background_review(
+            messages_snapshot=[],
+            review_memory=True,
+            review_skills=True,
+        )
+
+    prompt = captured["user_message"]
+    assert "Allowed tools:" in prompt
+    assert "memory" in prompt
+    assert "skill_view" in prompt
+    assert "skills_list" in prompt
+    assert "Do not call read_file" in prompt
+    assert "terminal" in prompt
+
+
+def test_background_review_agent_tools_are_limited():
+    """Verify the resolved memory+skills toolsets only contain memory and skill tools.
+
+    Sanity check on the source of truth for what the runtime whitelist is
+    derived from — if a future PR adds e.g. `terminal` to the `memory`
+    toolset, the review-fork safety contract silently breaks.
+    """
+    from toolsets import resolve_multiple_toolsets
+
+    expected_tools = set(resolve_multiple_toolsets(["memory", "skills"]))
+
+    assert "memory" in expected_tools
+    assert "skill_manage" in expected_tools
+    assert "skill_view" in expected_tools
+    assert "skills_list" in expected_tools
+
+    assert "terminal" not in expected_tools
+    assert "send_message" not in expected_tools
+    assert "delegate_task" not in expected_tools
+    assert "web_search" not in expected_tools
+    assert "execute_code" not in expected_tools
+
 
 def test_read_file_outside_review_does_not_mark(tmp_path):
     """Foreground reads must not populate the review-fork read set."""
