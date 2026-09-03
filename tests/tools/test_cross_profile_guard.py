@@ -191,6 +191,125 @@ class TestSkillManageCrossProfileErrorUX:
         assert "not found in active profile 'hermes-security'" in err
         assert "skills_list" in err
 
+    # ------------------------------------------------------------------
+    # "Did you mean ...?" suggestion — production-incident reproduction.
+    # Drives the 2026-07-13 ``skill_manage`` error cluster where the
+    # caller passed ``fitness/google-health-api``,
+    # ``meta/skill-patcher-evolver`` etc. and got a bare "not found"
+    # with no hint about the correct name.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _skill_with_frontmatter(skill_dir: Path, name: str, description: str = "x"):
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n"
+        )
+
+    def test_category_slash_path_suggests_bare_tail(
+        self, fake_hermes, monkeypatch
+    ):
+        """``fitness/google-health-api`` -> suggests ``google-health-api``."""
+        # Place a skill in the security profile (the active one).
+        target = fake_hermes["sec_home"] / "skills" / "fitness" / "google-health-api"
+        self._skill_with_frontmatter(target, "google-health-api")
+
+        # Also add a distractor so substring-match isn't trivial.
+        self._skill_with_frontmatter(
+            fake_hermes["sec_home"] / "skills" / "google-health-fixture",
+            "google-health-fixture",
+        )
+
+        import importlib
+        import tools.skill_manager_tool
+        importlib.reload(tools.skill_manager_tool)
+        from tools.skill_manager_tool import _skill_not_found_error
+
+        err = _skill_not_found_error("fitness/google-health-api")
+        assert "Did you mean" in err
+        assert "'google-health-api'" in err
+
+    def test_category_colon_path_suggests_bare_tail(
+        self, fake_hermes, monkeypatch
+    ):
+        """``fitness:google-health-api`` (colon variant) -> suggests tail."""
+        target = fake_hermes["sec_home"] / "skills" / "fitness" / "google-health-api"
+        self._skill_with_frontmatter(target, "google-health-api")
+
+        import importlib
+        import tools.skill_manager_tool
+        importlib.reload(tools.skill_manager_tool)
+        from tools.skill_manager_tool import _skill_not_found_error
+
+        err = _skill_not_found_error("fitness:google-health-api")
+        assert "Did you mean" in err
+        assert "'google-health-api'" in err
+
+    def test_close_miss_falls_back_to_difflib(
+        self, fake_hermes, monkeypatch
+    ):
+        """Typo'd name (``skill-curator`` when real is ``skill-patcher-evolver``)
+        gets a fuzzy match even though no tail is present."""
+        self._skill_with_frontmatter(
+            fake_hermes["sec_home"] / "skills" / "skill-patcher-evolver",
+            "skill-patcher-evolver",
+            description="real one",
+        )
+        self._skill_with_frontmatter(
+            fake_hermes["sec_home"] / "skills" / "skill-curator-real",
+            "skill-curator-real",
+            description="real one",
+        )
+
+        import importlib
+        import tools.skill_manager_tool
+        importlib.reload(tools.skill_manager_tool)
+        from tools.skill_manager_tool import _skill_not_found_error
+
+        # 'skill-curator' is a substring of 'skill-curator-real', so
+        # we expect that suggestion.
+        err = _skill_not_found_error("skill-curator")
+        assert "Did you mean" in err
+        assert "'skill-curator-real'" in err
+
+    def test_genuinely_missing_no_suggestion(
+        self, fake_hermes, monkeypatch
+    ):
+        """Pure gibberish with no close match falls back to skills_list hint."""
+        import importlib
+        import tools.skill_manager_tool
+        importlib.reload(tools.skill_manager_tool)
+        from tools.skill_manager_tool import _skill_not_found_error
+
+        err = _skill_not_found_error("zxqp-no-such-thing-anywhere")
+        # No "Did you mean" — there is no close match.
+        assert "Did you mean" not in err
+        assert "skills_list" in err
+
+    def test_suggestions_returns_at_most_three(
+        self, fake_hermes, monkeypatch
+    ):
+        """Limit is enforced so the error stays compact."""
+        for n in ("patch-helper", "patch-utility", "patch-runner", "patch-tool",
+                  "patch-extras"):
+            self._skill_with_frontmatter(
+                fake_hermes["sec_home"] / "skills" / n, n,
+            )
+
+        import importlib
+        import tools.skill_manager_tool
+        importlib.reload(tools.skill_manager_tool)
+        from tools.skill_manager_tool import (
+            _find_skill_name_suggestions,
+            _skill_not_found_error,
+        )
+
+        sugg = _find_skill_name_suggestions("patch", limit=3)
+        assert len(sugg) <= 3
+        # All returned suggestions must contain "patch" (substring filter).
+        for s in sugg:
+            assert "patch" in s
+
 
 # ---------------------------------------------------------------------------
 # System prompt active-profile line (item B)
