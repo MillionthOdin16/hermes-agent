@@ -229,11 +229,41 @@ class TestTelegramAdaptiveDelay:
     @pytest.mark.asyncio
     async def test_short_chunk_uses_normal_delay(self):
         adapter = _make_telegram_adapter()
-        adapter._enqueue_text_event(_make_event("short msg", Platform.TELEGRAM))
+        await adapter._enqueue_text_event(_make_event("short msg", Platform.TELEGRAM))
 
         # Should flush after the normal 0.1s delay
         await asyncio.sleep(0.15)
         adapter.handle_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_near_limit_chunk_uses_split_delay(self):
+        """A chunk near the 4096-char limit should trigger longer delay."""
+        adapter = _make_telegram_adapter()
+        long_text = "x" * 4050  # near the 4096 limit
+        await adapter._enqueue_text_event(_make_event(long_text, Platform.TELEGRAM))
+
+        # After the short delay, should NOT have flushed yet
+        await asyncio.sleep(0.15)
+        adapter.handle_message.assert_not_called()
+
+        # After the split delay, should be flushed
+        await asyncio.sleep(0.25)
+        adapter.handle_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_split_continuation_merged(self):
+        """Two near-limit chunks should both be merged."""
+        adapter = _make_telegram_adapter()
+
+        await adapter._enqueue_text_event(_make_event("x" * 4050, Platform.TELEGRAM))
+        await asyncio.sleep(0.05)
+        await adapter._enqueue_text_event(_make_event("continuation text", Platform.TELEGRAM))
+
+        # Short chunk arrived → should use normal delay now
+        await asyncio.sleep(0.15)
+        adapter.handle_message.assert_called_once()
+        text = adapter.handle_message.call_args[0][0].text
+        assert "continuation text" in text
 
 
 # =====================================================================

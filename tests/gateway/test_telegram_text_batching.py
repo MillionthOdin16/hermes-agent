@@ -68,7 +68,7 @@ class TestTextBatching:
         adapter = _make_adapter()
         event = _make_event("hello world")
 
-        adapter._enqueue_text_event(event)
+        await adapter._enqueue_text_event(event)
 
         # Not dispatched yet
         adapter.handle_message.assert_not_called()
@@ -85,9 +85,9 @@ class TestTextBatching:
         """Two rapid messages from the same chat should be merged."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("This is part one of a long"))
+        await adapter._enqueue_text_event(_make_event("This is part one of a long"))
         await asyncio.sleep(0.02)  # small gap, within batch window
-        adapter._enqueue_text_event(_make_event("message that was split by Telegram."))
+        await adapter._enqueue_text_event(_make_event("message that was split by Telegram."))
 
         # Not dispatched yet (timer restarted)
         adapter.handle_message.assert_not_called()
@@ -105,11 +105,11 @@ class TestTextBatching:
         """Three rapid messages should all merge."""
         adapter = _make_adapter()
 
-        adapter._enqueue_text_event(_make_event("chunk 1"))
+        await adapter._enqueue_text_event(_make_event("chunk 1"))
         await asyncio.sleep(0.02)
-        adapter._enqueue_text_event(_make_event("chunk 2"))
+        await adapter._enqueue_text_event(_make_event("chunk 2"))
         await asyncio.sleep(0.02)
-        adapter._enqueue_text_event(_make_event("chunk 3"))
+        await adapter._enqueue_text_event(_make_event("chunk 3"))
 
         await asyncio.sleep(0.2)
 
@@ -119,6 +119,159 @@ class TestTextBatching:
         assert "chunk 2" in text
         assert "chunk 3" in text
 
+    @pytest.mark.asyncio
+    async def test_different_chats_not_merged(self):
+        """Messages from different chats should be separate batches."""
+        adapter = _make_adapter()
+
+        await adapter._enqueue_text_event(_make_event("from user A", chat_id="111"))
+        await adapter._enqueue_text_event(_make_event("from user B", chat_id="222"))
+
+        await asyncio.sleep(0.2)
+
+        assert adapter.handle_message.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_batch_cleans_up_after_flush(self):
+        """After flushing, internal state should be clean."""
+        adapter = _make_adapter()
+
+        await adapter._enqueue_text_event(_make_event("test"))
+        await asyncio.sleep(0.2)
+
+        assert len(adapter._pending_text_batches) == 0
+        assert len(adapter._pending_text_batch_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_dm_topic_batching_recovers_thread_before_keying(self):
+        """DM-topic text batches should use the recovered topic lane."""
+        adapter = _make_adapter()
+        adapter.set_topic_recovery_fn(
+            lambda source: "222" if str(source.thread_id or "") == "1" else None
+        )
+        event = MessageEvent(
+            text="hello from DM topic",
+            message_type=MessageType.TEXT,
+            source=SessionSource(
+                platform=Platform.TELEGRAM,
+                chat_id="12345",
+                chat_type="dm",
+                user_id="user-1",
+                thread_id="1",
+            ),
+        )
+
+        await adapter._enqueue_text_event(event)
+
+        def _key(thread_id: str) -> str:
+            return build_session_key(
+                SimpleNamespace(
+                    platform=Platform.TELEGRAM,
+                    chat_id="12345",
+                    chat_type="dm",
+                    thread_id=thread_id,
+                ),
+                group_sessions_per_user=True,
+                thread_sessions_per_user=False,
+            )
+
+        assert _key("222") in adapter._pending_text_batches
+        assert _key("1") not in adapter._pending_text_batches
+        assert event.source.thread_id == "222"
+
+        await asyncio.sleep(0.2)
+
+        adapter.handle_message.assert_called_once()
+        dispatched = adapter.handle_message.call_args[0][0]
+        assert dispatched.source.thread_id == "222"
+
+    @pytest.mark.asyncio
+    async def test_dm_topic_batching_offloads_topic_recovery_before_keying(self, monkeypatch):
+        """Topic recovery may touch SessionDB, so batching must keep it off-loop."""
+        adapter = _make_adapter()
+        adapter.set_topic_recovery_fn(
+            lambda source: "222" if str(source.thread_id or "") == "1" else None
+        )
+        event = MessageEvent(
+            text="hello from DM topic",
+            message_type=MessageType.TEXT,
+            source=SessionSource(
+                platform=Platform.TELEGRAM,
+                chat_id="12345",
+                chat_type="dm",
+                user_id="user-1",
+                thread_id="1",
+            ),
+        )
+        seen = []
+        real_to_thread = asyncio.to_thread
+
+        async def _spy(func, *args, **kwargs):
+            seen.append(getattr(func, "__name__", repr(func)))
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", _spy)
+
+        await adapter._enqueue_text_event(event)
+
+        assert "_apply_topic_recovery" in seen
+        assert event.source.thread_id == "222"
+
+    @pytest.mark.asyncio
+    async def test_disconnect_cancels_pending_text_batch_without_dispatch(self):
+        """Disconnect should not let buffered text flush into a stale run."""
+        adapter = _make_adapter()
+
+        await adapter._enqueue_text_event(_make_event("stale text"))
+        await adapter.disconnect()
+        await asyncio.sleep(0.2)
+
+        adapter.handle_message.assert_not_called()
+        assert adapter._pending_text_batches == {}
+        assert adapter._pending_text_batch_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_disconnected_adapter_drops_pending_text_flush_before_dispatch(self):
+        """A pending text flush should drop its event if teardown wins the race."""
+        adapter = _make_adapter()
+
+        await adapter._enqueue_text_event(_make_event("stale text"))
+        adapter._mark_disconnected()
+        await asyncio.sleep(0.2)
+
+        adapter.handle_message.assert_not_called()
+        assert adapter._pending_text_batches == {}
+        assert adapter._pending_text_batch_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_disconnected_adapter_drops_late_text_batch_enqueue(self):
+        """Late update handlers should not schedule batches after teardown starts."""
+        adapter = _make_adapter()
+        adapter._mark_disconnected()
+
+        await adapter._enqueue_text_event(_make_event("late text"))
+        await asyncio.sleep(0.2)
+
+        adapter.handle_message.assert_not_called()
+        assert adapter._pending_text_batches == {}
+        assert adapter._pending_text_batch_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_disconnected_adapter_drops_pending_photo_flush_before_dispatch(self):
+        """A pending photo batch should not dispatch after disconnect starts."""
+        adapter = _make_adapter()
+        adapter._media_batch_delay_seconds = 0.1
+        event = _make_event("photo caption")
+        event.media_urls = ["/tmp/photo.jpg"]
+        event.media_types = ["image/jpeg"]
+
+        adapter._enqueue_photo_event("chat:photo-burst", event)
+        adapter._mark_disconnected()
+        await asyncio.sleep(0.2)
+
+        adapter.handle_message.assert_not_called()
+        assert adapter._pending_photo_batches == {}
+        assert adapter._pending_photo_batch_tasks == {}
 
     @pytest.mark.asyncio
     async def test_disconnected_adapter_drops_pending_media_group_flush_before_dispatch(self):
