@@ -7,7 +7,9 @@ assemble pieces, then combines them with memory and ephemeral prompts.
 import json
 import logging
 import os
+import hashlib
 import queue
+import re
 import sys
 import threading
 import contextvars
@@ -1607,6 +1609,22 @@ _SKILLS_PROMPT_CACHE_LOCK = threading.Lock()
 # v2: entries gained org provenance fields (org_id/org_author/rel_dir) for M2
 # org-shared skills; older snapshots are discarded and rebuilt.
 _SKILLS_SNAPSHOT_VERSION = 2
+_SKILLS_PROMPT_FINGERPRINT_RE = re.compile(
+    r"Skills snapshot fingerprint: sha256:([0-9a-f]{16,64})"
+)
+
+
+def extract_skills_system_prompt_fingerprint(prompt: str) -> Optional[str]:
+    """Return the embedded skills prompt fingerprint, if present."""
+    match = _SKILLS_PROMPT_FINGERPRINT_RE.search(prompt or "")
+    return match.group(1) if match else None
+
+
+def _skills_system_prompt_with_fingerprint(body: str) -> str:
+    if not body:
+        return body
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return "Skills snapshot fingerprint: sha256:{}\n{}".format(digest, body)
 
 
 def _skills_prompt_snapshot_path() -> Path:
@@ -2204,8 +2222,8 @@ def _build_skills_system_prompt_inner(
                 else:
                     index_lines.append(f"    - {name}")
 
-        result = (
-            "## Skills\n"
+        result = _skills_system_prompt_with_fingerprint(
+            "## Skills (mandatory)\n"
             "Before replying, scan the skills below. If a skill matches or is even partially relevant "
             "to your task, you MUST load it with skill_view(name) and follow its instructions. "
             "Err on the side of loading — it is always better to have context you don't need "
