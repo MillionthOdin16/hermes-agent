@@ -19660,6 +19660,43 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Check for commands
         command = event.get_command()
 
+        # If the message is a reply AND was recognized as a command, enrich
+        # the command args so the handler sees the replied-to context. The
+        # conversation flow injects a `[Replying to: "..."]\n\n` prefix at
+        # message_text for non-command messages (gateway/run.py:12188); without
+        # this mirror, every command handler (especially /btw /bg /queue /steer)
+        # strips just the args via get_command_args() and runs the prompt with
+        # no awareness of which prior message the user was replying to.
+        # Keep the slash-command word at the head so is_command() and
+        # get_command() still resolve correctly.
+        if (
+            command
+            and getattr(event, "reply_to_text", None)
+            and getattr(event, "reply_to_message_id", None)
+            and (event.text or "").lstrip().startswith("/")
+        ):
+            try:
+                _reply_own = bool(getattr(event, "reply_to_is_own_message", False))
+                _reply_snip = (event.reply_to_text or "")[:500]
+                _prefix = (
+                    f'[Replying to your previous message: "{_reply_snip}"]\n\n'
+                    if _reply_own
+                    else f'[Replying to: "{_reply_snip}"]\n\n'
+                )
+                # Split on the first space to keep the command word at the head
+                # (preserves is_command() / get_command() semantics) and prepend
+                # the reply context to the args only.
+                _parts = (event.text or "").split(maxsplit=1)
+                _cmd_word = _parts[0] if _parts else ""
+                _args = _parts[1] if len(_parts) > 1 else ""
+                event.text = (
+                    f"{_cmd_word} {_prefix}{_args}" if _args else f"{_cmd_word} {_prefix.rstrip()}"
+                ).strip()
+                command = event.get_command()
+            except Exception:
+                # Best-effort enrichment; never block command dispatch on a bug.
+                pass
+
         from hermes_cli.commands import (
             GATEWAY_KNOWN_COMMANDS,
             is_gateway_known_command,
