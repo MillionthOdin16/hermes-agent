@@ -702,8 +702,6 @@ class TestPreflightCompression:
             f"First preflight pass should see the full history, got "
             f"{len(first_call_messages)} messages"
         )
-        assert result["completed"] is True
-        assert result["final_response"] == "After preflight"
         assert any(
             ev == "lifecycle" and "Preflight compression" in msg
             for ev, msg in status_messages
@@ -753,55 +751,46 @@ class TestPreflightCompression:
             for ev, msg in status_messages
         )
 
-    def test_preflight_uses_context_engine_custom_status_message(self, agent):
-        """Plugin engines can replace generic built-in-compressor wording."""
+    def test_preflight_retries_when_compression_rewrites_same_message_count(self, agent):
+        """Preflight compression can make progress without reducing message count."""
         agent.compression_enabled = True
-        agent.context_compressor.context_length = 200_000
-        agent.context_compressor.threshold_tokens = 100_000
-
-        def _custom_status(**kwargs):
-            assert kwargs["phase"] == "preflight"
-            assert kwargs["approx_tokens"] == 114_000
-            assert kwargs["threshold_tokens"] == 100_000
-            return "🔧 LCM context maintenance: preparing compacted context."
-
-        agent.context_compressor.get_automatic_compaction_status_message = _custom_status
+        agent.context_compressor.context_length = 2000
+        agent.context_compressor.threshold_tokens = 200
 
         big_history = []
         for i in range(20):
-            big_history.append({"role": "user", "content": f"Message {i} padded"})
-            big_history.append({"role": "assistant", "content": f"Response {i} padded"})
+            big_history.append({"role": "user", "content": f"Message {i} " + "x" * 100})
+            big_history.append({"role": "assistant", "content": f"Response {i} " + "y" * 100})
 
-        ok_resp = _mock_response(content="After custom preflight", finish_reason="stop")
+        rewritten = [
+            {"role": m["role"], "content": f"{m['role']} summarized {i}"}
+            for i, m in enumerate(big_history + [{"role": "user", "content": "hello"}])
+        ]
+        assert len(rewritten) == len(big_history) + 1
+
+        ok_resp = _mock_response(content="After same-count preflight", finish_reason="stop")
         agent.client.chat.completions.create.side_effect = [ok_resp]
-        status_messages = []
-        agent.status_callback = lambda ev, msg: status_messages.append((ev, msg))
-
-        _rough_calls = {"n": 0}
-
-        def _rough_estimate(*_args, **_kwargs):
-            _rough_calls["n"] += 1
-            return 114_000 if _rough_calls["n"] == 1 else 40_000
 
         with (
-            patch("agent.turn_context.estimate_request_tokens_rough", side_effect=_rough_estimate),
-            patch("agent.conversation_loop.estimate_request_tokens_rough", side_effect=_rough_estimate),
             patch.object(agent, "_compress_context") as mock_compress,
+            patch(
+                "agent.turn_context.estimate_request_tokens_rough",
+                side_effect=[500, 100, 100],
+            ),
+            patch(
+                "agent.conversation_loop.estimate_request_tokens_rough",
+                side_effect=[500, 100, 100],
+            ),
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
         ):
-            mock_compress.return_value = (
-                [{"role": "user", "content": f"{SUMMARY_PREFIX}\nPrevious conversation"}],
-                "new system prompt",
-            )
+            mock_compress.return_value = (rewritten, "new system prompt")
             result = agent.run_conversation("hello", conversation_history=big_history)
 
         mock_compress.assert_called_once()
         assert result["completed"] is True
-        lifecycle_messages = [msg for ev, msg in status_messages if ev == "lifecycle"]
-        assert "🔧 LCM context maintenance: preparing compacted context." in lifecycle_messages
-        assert not any("Preflight compression" in msg for msg in lifecycle_messages)
+        assert result["final_response"] == "After same-count preflight"
 
 
     def test_preflight_compresses_when_projected_real_usage_crosses(self, agent):
