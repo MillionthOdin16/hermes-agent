@@ -3257,12 +3257,12 @@ class ContextCompressor(ContextEngine):
         # passes the new value explicitly. (#43547)
         if max_tokens is not None:
             self.max_tokens = self._coerce_max_tokens(max_tokens)
-        # _compute_threshold_tokens takes int default 0; pass through 0 when
-        # the coerced cap is None ("no cap configured") to avoid the
-        # None > 0 TypeError in the helper.
+        # _compute_threshold_tokens takes (context_length, threshold_percent,
+        # max_tokens) — 3 positional args in upstream. The cap is applied
+        # separately via _apply_threshold_tokens_cap() below (Pitfall 75:
+        # don't change the upstream helper signature; cap at the call site).
         self.threshold_tokens = self._compute_threshold_tokens(
             context_length, self.threshold_percent, self.max_tokens,
-            self.threshold_tokens_cap if self.threshold_tokens_cap is not None else 0,
         )
         # Re-apply the absolute token cap so it survives model switches
         # and fallback activations. The cap is a first-class config value
@@ -3483,9 +3483,9 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        threshold_tokens_cap: int = 0,
         max_tokens: int | None = None,
         model_thresholds: dict[str, float] | None = None,
-        threshold_tokens_cap: Any = None,
         proactive_prune_tokens: int = 0,
         proactive_prune_min_result_chars: int = 8000,
         proactive_prune_min_reclaim_tokens: int = 4096,
