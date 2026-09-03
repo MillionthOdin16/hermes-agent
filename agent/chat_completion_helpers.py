@@ -5703,6 +5703,72 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                     f"stale stream detected after {int(_stale_elapsed)}s, reconnecting"
                 )
 
+        # First-byte (TTFB) watchdog.  Separate from the long-running
+        # stale timeout: when the stream is alive but no chunk has arrived
+        # yet, the connection is most likely dead at the load-balancer /
+        # CDN level (TCP / TLS handshake succeeded, the upstream is silent).
+        # A 90 s default catches the bulk of these without killing healthy
+        # long-prefill requests; tune with HERMES_STREAMING_TTFB_SECONDS.
+        # After the first real chunk, this check is bypassed and the
+        # ordinary stale timeout governs the rest of the stream.
+        #
+        # Disabled when:
+        #  - local provider (prefill legitimately takes minutes)
+        #  - reasoning-model floor is non-empty (extended thinking)
+        #  - operator set HERMES_STREAMING_TTFB_SECONDS=0
+        _ttfb_secs = env_float("HERMES_STREAMING_TTFB_SECONDS", 90.0)
+        _first_chunk_received = False
+        try:
+            _ttfb_diag = request_client_holder.get("diag") or {}
+            _first_chunk_received = _ttfb_diag.get("first_chunk_at") is not None
+        except Exception:
+            pass
+        if (
+            _ttfb_secs > 0
+            and not _first_chunk_received
+            and (not agent.base_url or not is_local_endpoint(agent.base_url))
+            and _reasoning_floor is None
+        ):
+            _ttfb_elapsed = time.time() - last_chunk_time["t"]
+            if _ttfb_elapsed > _ttfb_secs:
+                _est_ctx_ttfb = estimate_request_context_tokens(api_kwargs)
+                logger.warning(
+                    "Streaming TTFB exceeded %.0fs (threshold %.0fs) "
+                    "— no first chunk yet. model=%s context=~%s tokens. "
+                    "Killing connection so retry can reconnect.",
+                    _ttfb_elapsed, _ttfb_secs,
+                    api_kwargs.get("model", "unknown"),
+                    f"{_est_ctx_ttfb:,}",
+                )
+                agent._buffer_status(
+                    f"⚠️ No first byte from provider in {int(_ttfb_elapsed)}s "
+                    f"(model: {api_kwargs.get('model', 'unknown')}). "
+                    f"Reconnecting..."
+                )
+                try:
+                    _close_request_client_once("ttfb_kill")
+                except Exception:
+                    pass
+                if agent.api_mode == "anthropic_messages":
+                    try:
+                        agent._anthropic_client.close()
+                        agent._rebuild_anthropic_client()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        agent._replace_primary_openai_client(
+                            reason="ttfb_pool_cleanup"
+                        )
+                    except Exception:
+                        pass
+                # Reset the timer so we don't kill repeatedly while the
+                # inner thread processes the closure.
+                last_chunk_time["t"] = time.time()
+                agent._touch_activity(
+                    f"ttfb stall detected after {int(_ttfb_elapsed)}s, reconnecting"
+                )
+
             if agent._interrupt_requested:
                 # The stale branch above already counted this iteration when its
                 # deadline won the race; do not double-count a simultaneous stop.
