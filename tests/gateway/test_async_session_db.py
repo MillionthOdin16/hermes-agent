@@ -119,6 +119,7 @@ _OFFLOADED_SYNC_HELPERS = frozenset({
     "_telegram_topic_new_header",
     "_schedule_telegram_topic_title_rename",
     "_apply_topic_recovery",
+    "_persist_gateway_session_rollover",
 })
 
 
