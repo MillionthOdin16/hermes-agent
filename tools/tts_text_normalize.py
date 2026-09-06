@@ -13,6 +13,45 @@ from __future__ import annotations
 import html
 import re
 
+# ⚡ Bolt: Cache compiled regexes and test membership sets at module load
+_DEG_C_NUM_RE = re.compile(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*C\b", flags=re.IGNORECASE)
+_DEG_F_NUM_RE = re.compile(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*F\b", flags=re.IGNORECASE)
+_DEG_C_RE = re.compile(r"°\s*C\b", flags=re.IGNORECASE)
+_DEG_F_RE = re.compile(r"°\s*F\b", flags=re.IGNORECASE)
+_DEG_NUM_RE = re.compile(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°")
+
+_KMH_SPACED_RE = re.compile(r"(?<=\d)\s*km\s*/\s*h\b", flags=re.IGNORECASE)
+_KMH_RE = re.compile(r"(?<=\d)\s*km/h\b", flags=re.IGNORECASE)
+_MM_RE = re.compile(r"(?<=\d)\s*mm\b", flags=re.IGNORECASE)
+_CM_RE = re.compile(r"(?<=\d)\s*cm\b", flags=re.IGNORECASE)
+_M_RE = re.compile(r"(?<=\d)\s*m\b", flags=re.IGNORECASE)
+_PER_RE = re.compile(r"(?<=\d)\s*/\s*(?=[A-Za-z])")
+
+_NZD_RE = re.compile(r"NZ\$\s*([\d,]*\d(?:\.\d+)?)", flags=re.IGNORECASE)
+_AUD_RE = re.compile(r"A\$\s*([\d,]*\d(?:\.\d+)?)", flags=re.IGNORECASE)
+_USD_RE = re.compile(r"US\$\s*([\d,]*\d(?:\.\d+)?)", flags=re.IGNORECASE)
+_EUR_RE = re.compile(r"€\s*([\d,]*\d(?:\.\d+)?)")
+_GBP_RE = re.compile(r"£\s*([\d,]*\d(?:\.\d+)?)")
+_BARE_USD_RE = re.compile(r"\$\s*([\d,]*\d(?:\.\d+)?)")
+_PCT_RE = re.compile(r"(?<=\d)\s*%")
+
+_NBSP_RE = re.compile("[\u00A0\u2007\u202F]")
+_BULLET_RE = re.compile("[•◦▪▫]")
+
+_MONEY_PCT_RE = re.compile(r"[$€£%]")
+_OP_RE = re.compile(r"[&→⇒≈~•◦▪▫]")
+
+_FLATTEN_NL_2_RE = re.compile(r"\n{2,}")
+_FLATTEN_NL_PUNCT_RE = re.compile(r"(?<=[.!?;:,])\n")
+_FLATTEN_DOT_SPACE_DOT_RE = re.compile(r"\.\s*\.")
+_FLATTEN_SPACES_RE = re.compile(r"[ \t]{2,}")
+
+_NEWLINES_3_RE = re.compile(r"\n{3,}")
+_SPACES_2_RE = re.compile(r"[ \t]{2,}")
+_PUNCT_SPACE_RE = re.compile(r"\s+([,.;:!?])")
+_PUNCT_CHAR_RE = re.compile(r"([,.;:!?])([A-Za-z])")
+_ELLIPSIS_4_RE = re.compile(r"\.{4,}")
+
 # Sentinel appended to former heading lines so smooth_whitespace_for_tts can
 # fold a heading into the sentence that follows it ("Weather, it will be sunny")
 # rather than leaving a bare "Weather." label that reads abruptly aloud.
@@ -107,49 +146,53 @@ def normalize_symbols_for_tts(text: str) -> str:
         return ""
 
     text = str(text)
-    text = re.sub("[   ]", " ", text)  # non-breaking / thin spaces
+    text = _NBSP_RE.sub(" ", text)  # non-breaking / thin spaces
     text = text.replace("\u2212", "-")  # minus sign
     text = text.replace("…", "...")  # ellipsis
-    text = _normalize_temperature_ranges(text)
 
-    # Temperatures with a number.  Do this before generic degree handling.
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*C\b", r"\1 degrees Celsius", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°\s*F\b", r"\1 degrees Fahrenheit", text, flags=re.IGNORECASE)
-    # Bare units with no leading number ("measured in degrees C").
-    text = re.sub(r"°\s*C\b", "degrees Celsius", text, flags=re.IGNORECASE)
-    text = re.sub(r"°\s*F\b", "degrees Fahrenheit", text, flags=re.IGNORECASE)
-    # Any remaining degree symbol (angles, stray cases).
-    text = re.sub(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*°", r"\1 degrees", text)
-    text = text.replace("°", " degrees")
+    if "°" in text:
+        text = _normalize_temperature_ranges(text)
+        # Temperatures with a number.  Do this before generic degree handling.
+        text = _DEG_C_NUM_RE.sub(r"\1 degrees Celsius", text)
+        text = _DEG_F_NUM_RE.sub(r"\1 degrees Fahrenheit", text)
+        # Bare units with no leading number ("measured in degrees C").
+        text = _DEG_C_RE.sub("degrees Celsius", text)
+        text = _DEG_F_RE.sub("degrees Fahrenheit", text)
+        # Any remaining degree symbol (angles, stray cases).
+        text = _DEG_NUM_RE.sub(r"\1 degrees", text)
+        text = text.replace("°", " degrees")
 
     # Common weather/travel units.
-    text = re.sub(r"(?<=\d)\s*km\s*/\s*h\b", " kilometres per hour", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*km/h\b", " kilometres per hour", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*mm\b", " millimetres", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*cm\b", " centimetres", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<=\d)\s*m\b", " metres", text, flags=re.IGNORECASE)
+    if "/" in text or "m" in text or "M" in text:
+        text = _KMH_SPACED_RE.sub(" kilometres per hour", text)
+        text = _KMH_RE.sub(" kilometres per hour", text)
+        text = _MM_RE.sub(" millimetres", text)
+        text = _CM_RE.sub(" centimetres", text)
+        text = _M_RE.sub(" metres", text)
 
-    # Numeric rates only ("5/month" -> "5 per month").  Requiring digit-then-letter
-    # keeps "and/or", "N/A", "TCP/IP" and dates like "2026/06" intact.
-    text = re.sub(r"(?<=\d)\s*/\s*(?=[A-Za-z])", " per ", text)
+        # Numeric rates only ("5/month" -> "5 per month").  Requiring digit-then-letter
+        # keeps "and/or", "N/A", "TCP/IP" and dates like "2026/06" intact.
+        text = _PER_RE.sub(" per ", text)
 
     # Money and percentages.  The integer part must END in a digit so a trailing
     # comma ("A$50, ...") is not swallowed into the spoken amount.
-    text = re.sub(r"NZ\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 New Zealand dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"A\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 Australian dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"US\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 US dollars", text, flags=re.IGNORECASE)
-    text = re.sub(r"€\s*([\d,]*\d(?:\.\d+)?)", r"\1 euros", text)
-    text = re.sub(r"£\s*([\d,]*\d(?:\.\d+)?)", r"\1 pounds", text)
-    text = re.sub(r"\$\s*([\d,]*\d(?:\.\d+)?)", r"\1 dollars", text)
-    text = re.sub(r"(?<=\d)\s*%", " percent", text)
+    if _MONEY_PCT_RE.search(text):
+        text = _NZD_RE.sub(r"\1 New Zealand dollars", text)
+        text = _AUD_RE.sub(r"\1 Australian dollars", text)
+        text = _USD_RE.sub(r"\1 US dollars", text)
+        text = _EUR_RE.sub(r"\1 euros", text)
+        text = _GBP_RE.sub(r"\1 pounds", text)
+        text = _BARE_USD_RE.sub(r"\1 dollars", text)
+        text = _PCT_RE.sub(" percent", text)
 
     # Operators and separators that commonly leak from formatted answers.
-    text = text.replace("&", " and ")
-    text = re.sub("[•◦▪▫]", " ", text)  # bullet glyphs
-    text = text.replace("→", " to ")  # ->
-    text = text.replace("⇒", " to ")  # =>
-    text = text.replace("≈", " about ")  # almost equal
-    text = text.replace("~", " about ")
+    if _OP_RE.search(text):
+        text = text.replace("&", " and ")
+        text = _BULLET_RE.sub(" ", text)  # bullet glyphs
+        text = text.replace("→", " to ")  # ->
+        text = text.replace("⇒", " to ")  # =>
+        text = text.replace("≈", " about ")  # almost equal
+        text = text.replace("~", " about ")
 
     text = _VARIATION_SELECTOR_RE.sub("", text)
     text = _EMOJI_RE.sub("", text)
@@ -201,11 +244,11 @@ def smooth_whitespace_for_tts(text: str) -> str:
     flush_pending()
 
     text = "\n".join(lines)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-    text = re.sub(r"([,.;:!?])([A-Za-z])", r"\1 \2", text)
-    text = re.sub(r"\.{4,}", "...", text)
+    text = _NEWLINES_3_RE.sub("\n\n", text)
+    text = _SPACES_2_RE.sub(" ", text)
+    text = _PUNCT_SPACE_RE.sub(r"\1", text)
+    text = _PUNCT_CHAR_RE.sub(r"\1 \2", text)
+    text = _ELLIPSIS_4_RE.sub("...", text)
     return text.strip()
 
 
@@ -250,11 +293,12 @@ def flatten_newlines_for_payload(text: str) -> str:
     """
     if not text:
         return ""
-    text = re.sub(r"\n{2,}", ". ", text)
-    text = re.sub(r"(?<=[.!?;:,])\n", " ", text)
-    text = text.replace("\n", ". ")
-    text = re.sub(r"\.\s*\.", ".", text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
+    if "\n" in text:
+        text = _FLATTEN_NL_2_RE.sub(". ", text)
+        text = _FLATTEN_NL_PUNCT_RE.sub(" ", text)
+        text = text.replace("\n", ". ")
+    text = _FLATTEN_DOT_SPACE_DOT_RE.sub(".", text)
+    text = _FLATTEN_SPACES_RE.sub(" ", text)
     return text.strip()
 
 
