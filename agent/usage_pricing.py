@@ -1125,6 +1125,10 @@ def resolve_billing_route(
     return BillingRoute(provider=provider_name or "unknown", model=model.split("/")[-1] if model else "", base_url=base_url or "", billing_mode="unknown")
 
 
+_VERSION_DOT_RE = re.compile(r"(\d+)\.(\d+)")
+_BEDROCK_SUFFIX_RE = re.compile(r"(?::\d+|-v\d+|-\d{8})+$")
+
+
 def _normalize_bedrock_model_name(model: str) -> str:
     """Normalize a Bedrock model id to its bare foundation-model form.
 
@@ -1156,13 +1160,13 @@ def _normalize_bedrock_model_name(model: str) -> str:
         if name.startswith(prefix):
             name = name[len(prefix):]
             break
-    name = re.sub(r"(\d+)\.(\d+)", r"\1-\2", name)
+    # ⚡ Bolt: Use pre-compiled regex for performance
+    name = _VERSION_DOT_RE.sub(r"\1-\2", name)
     # Bedrock inference profile IDs append these documented components to the
     # foundation model ID. Strip only the trailing forms, not arbitrary model
     # name continuations that could be a distinct SKU.
-    name = re.sub(r":\d+$", "", name)
-    name = re.sub(r"-v\d+$", "", name)
-    name = re.sub(r"-\d{8}$", "", name)
+    # ⚡ Bolt: Consolidate multiple re.sub calls into a single compiled regex call
+    name = _BEDROCK_SUFFIX_RE.sub("", name)
     return name
 
 
@@ -1179,7 +1183,8 @@ def _normalize_anthropic_model_name(model: str) -> str:
         name = name[len("anthropic/"):]
     # Normalize dots to dashes in version numbers (e.g. 4.7 → 4-7, 4.6 → 4-6)
     # But preserve the rest of the name structure
-    name = re.sub(r"(\d+)\.(\d+)", r"\1-\2", name)
+    # ⚡ Bolt: Use pre-compiled regex for performance
+    name = _VERSION_DOT_RE.sub(r"\1-\2", name)
     return name
 
 
