@@ -1,0 +1,4 @@
+## 2026-09-07 - Sanitize environment for shell.exec to prevent credential leakage
+**Vulnerability:** The `shell.exec` method in `tui_gateway/methods_tools.py` directly executes `subprocess.run` with `shell=True` without explicitly passing a sanitized environment. The TUI server process's `os.environ` contains all sensitive API keys. When `env` is not passed to `subprocess.run`, it inherits the parent process's environment by default, potentially leaking all API keys to the child process.
+**Learning:** Even if `detect_dangerous_command` catches known bad commands, the underlying execution environment is inherently unsafe for running *any* command because the child process inherits all sensitive environment variables from the gateway by default.
+**Prevention:** Always explicitly pass `env=build_subprocess_env()` (or similar sanitized environment builder) when running subprocesses inside the gateway, rather than relying on default environment inheritance.
