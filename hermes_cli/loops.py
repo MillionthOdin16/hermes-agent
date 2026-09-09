@@ -55,6 +55,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# ⚡ Bolt: Cache compiled regexes at module level to avoid costly recompilation in the hot path of _digest_response
+_TIME_TOKENS_RE = re.compile(
+    r"\d{1,2}:\d{2}(?::\d{2})?|"
+    r"\d{4}-\d{2}-\d{2}|"
+    r"\b\d+(?:\.\d+)?\s*(?:s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)\b"
+)
+_WHITESPACE_RE = re.compile(r"\s+")
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Constants & defaults
@@ -513,10 +521,8 @@ def _digest_response(response: str) -> str:
     """
     text = (response or "").strip().lower()
     # Drop clock/timestamp tokens (14:02:33, 2026-07-26, 1500s, 25m ago...).
-    text = re.sub(r"\d{1,2}:\d{2}(:\d{2})?", "", text)
-    text = re.sub(r"\d{4}-\d{2}-\d{2}", "", text)
-    text = re.sub(r"\b\d+(\.\d+)?\s*(s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)\b", "", text)
-    text = re.sub(r"\s+", " ", text)
+    text = _TIME_TOKENS_RE.sub("", text)
+    text = _WHITESPACE_RE.sub(" ", text)
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
