@@ -1,0 +1,4 @@
+## 2026-09-12 - Prevent Credential Leakage to Untrusted Shell Commands
+**Vulnerability:** Unsanitized environment passed to subprocesses running shell commands in `tui_gateway/methods_tools.py`, specifically `shell.exec`. The environment contained sensitive API keys (e.g., `os.environ`), leading to potential credential leakage to untrusted shell commands.
+**Learning:** `os.environ` is fully loaded in the gateway environment, which executes potentially dangerous or untrusted shell commands. Missing sanitization allows subprocesses to inherit and potentially leak credentials.
+**Prevention:** Always use `build_subprocess_env()` from `tools.environments.local` to explicitly sanitize the environment (which redacts credentials) before passing it to `subprocess.run(..., env=build_subprocess_env())` when executing potentially untrusted commands or shell operations.
