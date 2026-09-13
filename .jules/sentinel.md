@@ -1,0 +1,4 @@
+## 2026-09-13 - Prevent credential leakage in shell.exec
+**Vulnerability:** The `shell.exec` command in `tui_gateway/methods_tools.py` uses `subprocess.run(shell=True)` which inherits the current process environment by default. In the TUI gateway, `os.environ` contains sensitive API keys. This means any arbitrary script run via `shell.exec` gets immediate access to these keys.
+**Learning:** In contexts where shell execution is explicitly intended and required (like `shell.exec`), modifying `shell=True` breaks legitimate usage. The security risk lies not in the shell execution itself, but in the implicit inheritance of the sensitive parent environment.
+**Prevention:** Always explicitly pass a sanitized environment to `subprocess.run` (e.g., using `build_subprocess_env()`) in environments like `tui_gateway` to prevent credential leakage to child processes.
