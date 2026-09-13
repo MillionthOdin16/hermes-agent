@@ -174,7 +174,7 @@ function ThemeSwitcherOptions({
           <ListItem
             active={isActive}
             aria-selected={isActive}
-            className="gap-3"
+            className="gap-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-current/40"
             key={th.name}
             onClick={() => {
               setTheme(th.name);
@@ -243,7 +243,7 @@ function FontSection({ fontChoices, fontId, setFont }: FontSectionProps) {
       <ListItem
         active={fontId === THEME_DEFAULT_FONT_ID}
         aria-selected={fontId === THEME_DEFAULT_FONT_ID}
-        className="gap-3"
+        className="gap-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-current/40"
         onClick={() => setFont(THEME_DEFAULT_FONT_ID)}
         role="option"
       >
@@ -281,7 +281,7 @@ function FontSection({ fontChoices, fontId, setFont }: FontSectionProps) {
                 <ListItem
                   active={isActive}
                   aria-selected={isActive}
-                  className="gap-3"
+                  className="gap-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-current/40"
                   key={f.id}
                   onClick={() => setFont(f.id)}
                   role="option"

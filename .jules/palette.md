@@ -1,0 +1,3 @@
+## 2026-05-25 - Added Focus Indicator to Language Switcher Dropdown Options
+**Learning:** In the `LanguageSwitcher` component, the custom dropdown options lacked focus indicators, making it hard to navigate via keyboard. This highlighted a pattern where custom dropdown/listbox options might lose accessibility styles if constructed from scratch rather than using a component library that provides them out-of-the-box.
+**Action:** Ensure that all interactive elements, even those built as custom buttons (e.g., dropdown options), always include clear focus states like `focus-visible:outline-none focus-visible:ring-1 ...` for robust keyboard navigation support.

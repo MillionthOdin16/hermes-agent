@@ -149,6 +149,8 @@ function LanguageSwitcherOptions({
           <button
             aria-selected={selected}
             className={cn(
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-current/40",
+
               "w-full text-left px-3 py-1.5 flex items-center gap-2 cursor-pointer",
               "font-sans text-display text-xs tracking-[0.08em]",
               "hover:bg-accent hover:text-accent-foreground transition-colors",
