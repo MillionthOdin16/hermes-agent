@@ -1,0 +1,3 @@
+## 2026-10-27 - Hoisting allocations out of loop generators
+**Learning:** Using `any(...)` or `all(...)` with generator expressions that repeatedly transform a constant or outer loop variable (e.g., `cause.lower()` or `marker.lower()`) forces memory reallocation on *every* iteration. This is surprisingly impactful in Python. When checking a large string against a list of markers, hoisting `cause_lower = cause.lower()` or pre-lowering the list avoids allocations and noticeably speeds up the hot path.
+**Action:** When performing substring or exact matches in loops or generator expressions, hoist any transformations (like `.lower()`) of loop-invariant variables outside the generator/loop so it's computed and allocated only once.
