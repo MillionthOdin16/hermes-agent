@@ -1,0 +1,4 @@
+## 2026-05-18 - Prevent Credential Leakage in shell.exec
+**Vulnerability:** The `shell.exec` command executed shell commands via `subprocess.run(..., shell=True)` without sanitizing the environment, passing down all environment variables (including API keys from the TUI server process) to the spawned child process.
+**Learning:** `shell.exec` is used for user-provided shell execution which poses a risk of leaking credentials stored in environment variables. Since `shell=True` and command line flags are meant to run as a shell, we must sanitize the process environment before calling `subprocess.run()`.
+**Prevention:** Use `tools.environments.local.build_subprocess_env()` to strip sensitive environment variables from `os.environ` before spawning subprocesses that run arbitrary or user-provided commands.
