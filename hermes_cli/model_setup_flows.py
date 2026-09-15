@@ -2557,7 +2557,9 @@ def _model_flow_bedrock(config, current_model=""):
             mid = m["id"]
             if any(mid.startswith(p) for p in _EXCLUDE_PREFIXES):
                 continue
-            if any(s in mid.lower() for s in _EXCLUDE_SUBSTRINGS):
+            # ⚡ Bolt: Hoist string allocation out of the generator for performance
+            mid_lower = mid.lower()
+            if any(s in mid_lower for s in _EXCLUDE_SUBSTRINGS):
                 continue
             if not bedrock_model_routable_from_region(mid, region):
                 continue
