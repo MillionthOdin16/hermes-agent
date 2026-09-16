@@ -390,6 +390,7 @@ export function ModelPickerDialog(props: Props) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="pl-7 h-8 text-sm"
+              aria-label="Filter providers and models"
             />
           </div>
         </div>
