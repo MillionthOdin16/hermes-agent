@@ -1,0 +1,3 @@
+## 2026-10-27 - Hoisting regex compilations out of performance-critical code paths
+**Learning:** Compiling regexes in tight loops or repeated function calls is a common performance bottleneck. Python's `re` module caches a limited number of recently compiled patterns, but compiling them at the module level is consistently faster and avoids locking overhead in concurrent environments.
+**Action:** When finding `re.compile` or `re.sub` / `re.match` / `re.search` with string patterns inside functions, extract the compiled pattern to the module level. Ensure the regex pattern is a constant. Do not dynamically assign attributes to methods to cache compiled regexes.
