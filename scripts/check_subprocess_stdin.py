@@ -52,10 +52,11 @@ TUI_CONTEXT_DIRS = [
 # an explicit stdin= argument.  The original regex only covered run/Popen
 # (gap #1 in #67639); call, check_output, check_call, os.system, and
 # asyncio.create_subprocess_* all inherit fd 0 equally.
+# ⚡ Bolt: Hoisting regex compilations to module level
 _SUBPROCESS_PATTERNS = [
-    r"subprocess\.(run|Popen|call|check_output|check_call)\s*\([\"'a-zA-Z_\[\(]",
-    r"os\.system\s*\([\"'a-zA-Z_\[\(]",
-    r"asyncio\.create_subprocess_(exec|shell)\s*\([\"'a-zA-Z_\[\(]",
+    re.compile(r"subprocess\.(run|Popen|call|check_output|check_call)\s*\([\"'a-zA-Z_\[\(]"),
+    re.compile(r"os\.system\s*\([\"'a-zA-Z_\[\(]"),
+    re.compile(r"asyncio\.create_subprocess_(exec|shell)\s*\([\"'a-zA-Z_\[\(]"),
 ]
 
 # Files with intentional stdin= override (e.g. input= creates a pipe).
@@ -92,7 +93,7 @@ def find_subprocess_calls(content: str, filepath: str) -> list[dict]:
     # Match only actual function calls — not comments, docstrings, or prose.
     # Multiple patterns cover subprocess.run/Popen/call/check_output/check_call,
     # os.system, and asyncio.create_subprocess_exec/shell.
-    patterns = [re.compile(p) for p in _SUBPROCESS_PATTERNS]
+    patterns = _SUBPROCESS_PATTERNS
 
     for i, line in enumerate(lines):
         # Skip comments.
