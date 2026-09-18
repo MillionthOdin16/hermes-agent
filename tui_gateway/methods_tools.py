@@ -2666,8 +2666,14 @@ def _(rid, params: dict) -> dict:
     try:
         from hermes_cli._subprocess_compat import windows_hide_flags
 
+        # 🛡️ Sentinel: Sanitize environment to prevent credential leakage
+        # The TUI gateway server process has all API keys in os.environ.
+        from tools.environments.local import build_subprocess_env
+        sanitized_env = build_subprocess_env()
+
         r = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=30, cwd=os.getcwd(),
+            env=sanitized_env,
             # Force UTF-8 + lossy decode so non-UTF-8 child output can't crash
             # the gateway thread on locale-mismatched Windows (#53137).
             encoding="utf-8", errors="replace",
