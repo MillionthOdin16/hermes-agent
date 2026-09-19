@@ -1,0 +1,4 @@
+## 2026-09-19 - Environment Sanitization for Shell Executions
+**Vulnerability:** Command execution capabilities like `shell.exec` in the gateway or user-configured quick commands passed the full environment (including all API keys in `os.environ`) to child processes when `subprocess.run(..., shell=True)` was called without specifying the `env` parameter.
+**Learning:** In a codebase where agents or gateway processes manage multiple provider secrets in their environment, any unrestricted child process inherently inherits those secrets, risking credential leakage if the output is logged or intercepted, or if the shell command is influenced by untrusted data.
+**Prevention:** Always build and supply a sanitized minimal environment (e.g., using `tools.environments.local.build_subprocess_env()`) whenever using `subprocess.run(..., shell=True)` within sensitive contexts to ensure child processes operate with least privilege.
