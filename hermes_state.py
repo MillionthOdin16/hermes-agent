@@ -1171,7 +1171,9 @@ def format_session_db_unavailable(prefix: str = "Session database not available"
     if not cause:
         return f"{prefix}."
     hint = ""
-    if any(marker in cause.lower() for marker in _WAL_INCOMPAT_MARKERS):
+    # ⚡ Bolt: Hoisting string manipulation out of loop
+    cause_lower = cause.lower()
+    if any(marker in cause_lower for marker in _WAL_INCOMPAT_MARKERS):
         hint = " (state.db may be on NFS/SMB/FUSE/ZFS — see https://www.sqlite.org/wal.html)"
     return f"{prefix}: {cause}{hint}."
 
@@ -2114,7 +2116,9 @@ def is_malformed_db_error(exc: BaseException) -> bool:
     """
     if not isinstance(exc, sqlite3.DatabaseError):
         return False
-    return any(marker in str(exc).lower() for marker in _MALFORMED_DB_MARKERS)
+    # ⚡ Bolt: Hoisting string manipulation out of loop
+    exc_str_lower = str(exc).lower()
+    return any(marker in exc_str_lower for marker in _MALFORMED_DB_MARKERS)
 
 
 # SQLITE_IOERR, matched as a plain substring so wrapped error strings still
@@ -2172,7 +2176,9 @@ def is_malformed_schema_error(exc: BaseException) -> bool:
     """
     if not isinstance(exc, sqlite3.DatabaseError):
         return False
-    return any(marker in str(exc).lower() for marker in _MALFORMED_SCHEMA_MARKERS)
+    # ⚡ Bolt: Hoisting string manipulation out of loop
+    exc_str_lower = str(exc).lower()
+    return any(marker in exc_str_lower for marker in _MALFORMED_SCHEMA_MARKERS)
 
 
 # Markers that mean the host filesystem cannot accept another write. Kept as
