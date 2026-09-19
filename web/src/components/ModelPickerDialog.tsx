@@ -363,7 +363,7 @@ export function ModelPickerDialog(props: Props) {
           size="icon"
           onClick={onClose}
           className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-          aria-label="Close"
+          aria-label="Close model picker"
         >
           <X />
         </Button>
@@ -461,7 +461,7 @@ export function ModelPickerDialog(props: Props) {
               {refreshing ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
               Refresh Models
             </Button>
-            <Button outlined onClick={onClose} disabled={applying}>
+            <Button outlined onClick={onClose} disabled={applying} aria-label="Cancel model selection">
               Cancel
             </Button>
             <Button onClick={confirm} disabled={!canConfirm}>
