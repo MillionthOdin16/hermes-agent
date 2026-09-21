@@ -6477,11 +6477,22 @@ class TelegramAdapter(BasePlatformAdapter):
     async def _flush_text_batch(self, key: str) -> None:
         """Telegram keeps its own flush body: a cancel after the pop must HOLD the event and re-raise
         (PTB already acked the update; the hold queue redispatches after reconnect) rather than shield
-        the dispatch — teardown must be able to stop a flush from reaching a torn-down session."""
+        the dispatch — teardown must be able to stop a flush from reaching a torn-down session.
+
+        A reassembled split command (``/command <args>`` continued across chunks) must re-enter the
+        gateway command path rather than the ordinary conversation path, so promote ``message_type``
+        before dispatch and surface the resolved type in the flush log line."""
+        def _log_text_flush(ev):
+            if ev.text and ev.text.startswith("/"):
+                ev.message_type = MessageType.COMMAND
+            logger.info(
+                "[Telegram] Flushing text batch %s (%d chars, type=%s)",
+                key, len(ev.text or ""), ev.message_type.name,
+            )
         await self._flush_buffered(
             self._pending_text_batches, self._pending_text_batch_tasks, key,
             self._text_batch_delay_for(self._pending_text_batches.get(key)), "text",
-            lambda ev: logger.info("[Telegram] Flushing text batch %s (%d chars)", key, len(ev.text or "")))
+            _log_text_flush)
 
     # -- Photo batching --
 
