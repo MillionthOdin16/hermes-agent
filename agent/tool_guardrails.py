@@ -213,10 +213,16 @@ def canonical_tool_args(args: Mapping[str, Any]) -> str:
     return _canonical_json(args)
 
 
-def classify_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str]:
-    """Fallback classifier used only when callers don't pass ``failed``; mirrors
-    ``agent.display._detect_tool_failure`` so the guardrail never disagrees with the CLI's ``[error]`` tag."""
-    if result is None or file_mutation_result_landed(tool_name, result):
+def classify_tool_failure(tool_name: str, result: Any) -> tuple[bool, str]:
+    """Safety-fallback classifier used only when callers don't pass ``failed``.
+
+    Mirrors ``agent.display._detect_tool_failure`` exactly so the guardrail
+    never disagrees with the CLI's user-visible ``[error]`` tag. Production
+    callers in ``run_agent.py`` always pass an explicit ``failed=`` derived
+    from ``_detect_tool_failure``; this function exists so standalone callers
+    (tests, tooling) still get consistent behavior.
+    """
+    if result is None:
         return False, ""
 
     # A harness REFUSAL of a redundant call (repeated identical read/search) carries
