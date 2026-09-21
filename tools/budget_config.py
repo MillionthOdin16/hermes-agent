@@ -11,8 +11,8 @@ PINNED_THRESHOLDS: Dict[str, float] = {"read_file": float("inf")}
 
 # Single source of truth for the defaults; tool_result_storage.py imports these.
 DEFAULT_RESULT_SIZE_CHARS: int = 100_000
-DEFAULT_TURN_BUDGET_CHARS: int = 200_000
-DEFAULT_PREVIEW_SIZE_CHARS: int = 1_500
+DEFAULT_TURN_BUDGET_CHARS: int = 250_000
+DEFAULT_PREVIEW_SIZE_CHARS: int = 5_000
 
 # Tighter per-result default for ``mcp_`` tools: MCP servers routinely return
 # un-paginated 20-50K payloads that sail under the generic 100K threshold; spillover
