@@ -840,7 +840,7 @@ def _resolve_alias_fallback(
 
     AmbiguousAliasError propagates: the alias exists on this provider, the user just has to
     choose — trying the next provider would silently switch them somewhere they didn't ask for."""
-    results = (resolve_alias(raw_input, p) for p in authenticated_providers or ("openrouter", "nous"))
+    results = (resolve_alias(raw_input, p) for p in authenticated_providers or ())
     return next((r for r in results if r is not None), None)
 
 
