@@ -3949,9 +3949,16 @@ class BasePlatformAdapter(ABC):
                     self._discard_text_debounce(session_key)
                     await self._dispatch_active_session_command(event, session_key, cmd)
                 else:
-                    logger.debug("[%s] Command '/%s' bypassing active-session guard for %s",
-                                 self.name, cmd, session_key)
-                    await self._dispatch_inline_reply(event)
+                    # Telegram may split long command messages near its boundary.
+                    # Let long commands flow through normal text batching so all
+                    # chunks can be assembled before dispatch (patch-36).
+                    _TEXT_BATCH_BYPASS_THRESHOLD = 3500
+                    if len(event.text or "") < _TEXT_BATCH_BYPASS_THRESHOLD:
+                        logger.debug("[%s] Command '/%s' bypassing active-session guard for %s",
+                                     self.name, cmd, session_key)
+                        await self._dispatch_inline_reply(event)
+                    else:
+                        return
             except Exception as e:
                 logger.error("[%s] Command '/%s' dispatch failed: %s", self.name, cmd, e, exc_info=True)
             return
