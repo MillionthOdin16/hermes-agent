@@ -519,7 +519,7 @@ registry.register(
     name="web_search", toolset="web", schema=WEB_SEARCH_SCHEMA,
     handler=lambda args, **kw: web_search_tool(args.get("query", ""), limit=args.get("limit", 5)),
     check_fn=check_web_api_key, requires_env=_web_requires_env(), emoji="🔍",
-    max_result_size_chars=100_000,
+    max_result_size_chars=250_000,
 )
 registry.register(
     name="web_extract", toolset="web", schema=WEB_EXTRACT_SCHEMA,
@@ -528,7 +528,7 @@ registry.register(
         char_limit=args.get("char_limit"),
     ),
     check_fn=check_web_api_key, requires_env=_web_requires_env(), is_async=True, emoji="📄",
-    max_result_size_chars=100_000,
+    max_result_size_chars=250_000,
 )
 
 
