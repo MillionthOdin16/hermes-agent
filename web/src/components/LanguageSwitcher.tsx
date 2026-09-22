@@ -66,6 +66,7 @@ export function LanguageSwitcher({ collapsed = false, dropUp = false }: Language
     <div ref={containerRef} className="relative inline-flex">
       <Button
         ghost
+        size={collapsed ? "icon" : undefined}
         onClick={() => setOpen((v) => !v)}
         title={t.language.switchTo}
         aria-label={t.language.switchTo}
