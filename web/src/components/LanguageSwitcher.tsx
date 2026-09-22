@@ -151,7 +151,7 @@ function LanguageSwitcherOptions({
             className={cn(
               "w-full text-left px-3 py-1.5 flex items-center gap-2 cursor-pointer",
               "font-sans text-display text-xs tracking-[0.08em]",
-              "hover:bg-accent hover:text-accent-foreground transition-colors",
+              "hover:bg-accent hover:text-accent-foreground transition-colors focus-visible:outline-none focus-visible:bg-accent focus-visible:text-accent-foreground",
               selected ? "font-semibold text-foreground" : "text-muted-foreground",
             )}
             key={code}
