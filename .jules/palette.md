@@ -1,0 +1,3 @@
+## 2026-02-18 - LanguageSwitcher UI Consistency Update
+**Learning:** The LanguageSwitcher lacked a responsive collapsed state, which broke consistency with the ThemeSwitcher it's placed next to. Also, using a generic endonym string alone wasn't providing clear visual context to users looking for the "Language" setting icon.
+**Action:** Always verify how a new UI component adapts to collapsed sidebar variants in responsive layouts. Ensure components placed next to each other (like LanguageSwitcher and ThemeSwitcher) share the same visual structure (an icon accompanied by a text label that disappears when collapsed) and responsive behaviors (e.g. `size={collapsed ? "icon" : undefined}`).
