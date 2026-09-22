@@ -360,11 +360,14 @@ function InlineContent({
 
 /** Highlight search terms within a plain text string. */
 function HighlightedText({ text, terms }: { text: string; terms?: string[] }) {
-  if (!terms || terms.length === 0) return <>{text}</>;
+  const regex = useMemo(() => {
+    if (!terms || terms.length === 0) return null;
+    const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    return new RegExp(`(${escaped.join("|")})`, "gi");
+  }, [terms]);
 
-  // Build a regex that matches any of the search terms (case-insensitive)
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const regex = new RegExp(`(${escaped.join("|")})`, "gi");
+  if (!regex) return <>{text}</>;
+
   const parts = text.split(regex);
 
   return (
