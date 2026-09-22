@@ -1,0 +1,3 @@
+## 2026-09-22 - Hoisting String Manipulations Outside of Generator Expressions
+**Learning:** Python generators implicitly run the inner expression (like `str(exc).lower()`) on every loop iteration, leading to O(N) redundant string memory allocations. For hot-path error handling and parsing loops checking multiple substrings (`any(k in s.lower() for k in ...)`), this causes measurable performance drag.
+**Action:** Always extract and assign the invariant operation outside the generator loop (e.g., `exc_lower = str(exc).lower()` and then `any(k in exc_lower for k in ...)`). Applied this uniformly across the codebase where `any()` with `.lower()` was found.

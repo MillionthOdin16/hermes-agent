@@ -23,7 +23,11 @@ def _jsonrpc_matches(exc: BaseException, codes: tuple, markers: tuple, code=None
     """Structural ``MCPError.error.code`` (or *code*) in *codes*, else any *marker* in ``str(exc).lower()``. Never
     ``isinstance`` on SDK exception types: they arrive wrapped in ExceptionGroups and drift across generations."""
     code = getattr(getattr(exc, "error", None), "code", None) or code
-    return code in codes or any(marker in str(exc).lower() for marker in markers)
+    if code in codes:
+        return True
+    # ⚡ Bolt: Hoisting string manipulation out of generator to avoid redundant memory allocations
+    exc_lower = str(exc).lower()
+    return any(marker in exc_lower for marker in markers)
 
 
 def _handshake_rejected_as_modern(exc: BaseException) -> bool:
