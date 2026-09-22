@@ -1,0 +1,3 @@
+## 2026-07-05 - Interactive Elements Inside Links Require ARIA Labels
+**Learning:** When an icon-only interactive element (like a `<Button size="icon">`) is nested inside a wrapper link (`<a>` tag) that provides a `title` or `aria-label`, screen readers may still identify the innermost element simply as "button" if it lacks its own `aria-label`. Furthermore, interactive elements inside links create redundant tab stops unless they are explicitly removed from the tab sequence with `tabIndex={-1}`.
+**Action:** Always add an explicit `aria-label` and `tabIndex={-1}` to icon-only buttons when they are wrapped in an anchor `<a>` link tag to prevent redundant and unlabeled tab stops.
