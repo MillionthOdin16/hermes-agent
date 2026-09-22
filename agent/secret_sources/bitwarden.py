@@ -182,6 +182,8 @@ def install_bws(*, force: bool = False) -> Path:
 
 
 def _http_download(url: str, dest: Path) -> None:
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("Invalid URL scheme")
     req = urllib.request.Request(url, headers={"User-Agent": "hermes-agent"})
     try:
         with urllib.request.urlopen(req, timeout=_BWS_DOWNLOAD_TIMEOUT) as resp, open(dest, "wb") as f:  # noqa: S310
