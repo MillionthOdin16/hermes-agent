@@ -152,7 +152,11 @@ class _KanbanDispatcher:
     def is_corrupt_board_db_error(self, exc: Exception) -> bool:
         if isinstance(exc, _kbc().KanbanDbCorruptError):
             return True
-        return isinstance(exc, sqlite3.DatabaseError) and any(m in str(exc).lower() for m in _CORRUPT_DB_MARKERS)
+        if not isinstance(exc, sqlite3.DatabaseError):
+            return False
+        # ⚡ Bolt: Hoisting string manipulation out of generator to avoid redundant memory allocations
+        exc_lower = str(exc).lower()
+        return any(m in exc_lower for m in _CORRUPT_DB_MARKERS)
 
     def _quarantine_lifted(self, slug: str, fingerprint: tuple) -> bool:
         """Return False while *slug* stays quarantined; lift (and log) otherwise."""
