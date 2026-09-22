@@ -373,6 +373,7 @@ export function ModelPickerDialog(props: Props) {
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               autoFocus
+              aria-label="Filter providers and models"
               placeholder="Filter providers and models…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
