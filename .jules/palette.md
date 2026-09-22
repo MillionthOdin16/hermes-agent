@@ -1,0 +1,3 @@
+## 2026-07-05 - Add ARIA label and tabIndex to icon-only button in anchor tag
+**Learning:** When an icon-only interactive element (like a Button) is nested inside a wrapper link (`<a>` tag) that provides a `title` or `aria-label`, the innermost interactive element must still have its own `aria-label` attribute to be correctly identified by screen readers. It should also be explicitly removed from the tab sequence with `tabIndex={-1}` to prevent redundant tab stops.
+**Action:** Always ensure nested interactive elements have proper `aria-label` attributes and are removed from the tab sequence if the parent wrapper already handles focus and context.
