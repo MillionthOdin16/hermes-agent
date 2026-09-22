@@ -358,13 +358,30 @@ function InlineContent({
   );
 }
 
+// Module-level cache for search term regular expressions to avoid redundant recompilation
+// across many HighlightedText leaf node renders.
+const highlightRegexCache = new Map<string, RegExp>();
+
+function getHighlightRegex(terms: string[]): RegExp | null {
+  if (!terms || terms.length === 0) return null;
+  const cacheKey = terms.join("\x00");
+  let regex = highlightRegexCache.get(cacheKey);
+  if (!regex) {
+    const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // Use "i" instead of "gi" because String.prototype.split does global splitting automatically,
+    // and maintaining global regex state (lastIndex) across splits or renders can cause bugs.
+    regex = new RegExp(`(${escaped.join("|")})`, "i");
+    highlightRegexCache.set(cacheKey, regex);
+  }
+  return regex;
+}
+
 /** Highlight search terms within a plain text string. */
 function HighlightedText({ text, terms }: { text: string; terms?: string[] }) {
-  if (!terms || terms.length === 0) return <>{text}</>;
+  const regex = terms ? getHighlightRegex(terms) : null;
 
-  // Build a regex that matches any of the search terms (case-insensitive)
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const regex = new RegExp(`(${escaped.join("|")})`, "gi");
+  if (!regex) return <>{text}</>;
+
   const parts = text.split(regex);
 
   return (
