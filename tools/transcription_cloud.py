@@ -164,7 +164,9 @@ def _transcribe_openai(
                 # reject a container with a bare 5xx instead (#81644). A 5xx is ambiguous, so it earns
                 # the same single transcode retry and, when no transcode is possible, its own error.
                 is_server_error = (exc.status_code or 0) >= 500
-                if not is_server_error and not any(k in str(exc).lower() for k in ("unsupported", "corrupted", "invalid file")):
+                # ⚡ Bolt: Hoist str(exc).lower() out of the generator to prevent repeated string allocations
+                exc_lower = str(exc).lower()
+                if not is_server_error and not any(k in exc_lower for k in ("unsupported", "corrupted", "invalid file")):
                     raise
                 # Newer models reject containers whisper-1 accepted (Ogg/Opus voice notes): transcode, retry once.
                 converted_path, transcode_error = _transcode_audio_for_stt(file_path, work_dir)

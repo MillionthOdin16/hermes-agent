@@ -563,7 +563,9 @@ def _log_security_warnings(name: str, skill_md: Path, content: str, all_dirs, ac
     warnings = []
     if not _under_any(skill_md, trusted_dirs):
         warnings.append(f"skill file is outside the trusted skills directory (~/.hermes/skills/): {skill_md}")
-    if any(p in content.lower() for p in _INJECTION_PATTERNS):
+    # ⚡ Bolt: Hoist content.lower() out of the generator to prevent repeated string allocations
+    content_lower = content.lower()
+    if any(p in content_lower for p in _INJECTION_PATTERNS):
         warnings.append("skill content contains patterns that may indicate prompt injection")
     if warnings:
         logger.warning("Skill security warning for '%s': %s", name, "; ".join(warnings))

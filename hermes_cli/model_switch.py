@@ -784,7 +784,9 @@ def resolve_alias(raw_input: str, current_provider: str) -> Optional[tuple[str, 
         pass
 
     prefix = f"{vendor}/{family}" if is_aggregator(current_provider) else family
-    matches = [mid for mid in catalog if mid.lower().startswith(prefix.lower())]
+    # ⚡ Bolt: Hoist prefix.lower() computation out of the list comprehension
+    prefix_lower = prefix.lower()
+    matches = [mid for mid in catalog if mid.lower().startswith(prefix_lower)]
     if not matches:
         return None
 
