@@ -141,7 +141,9 @@ def _serve_plugin_skill(
                      readiness_status=SkillReadinessStatus.UNSUPPORTED.value)
     if file_path:
         return _serve_skill_file(skill_md.parent, file_path, qualified_name, read_error_prefix=True)
-    if any(p in content.lower() for p in _INJECTION_PATTERNS):
+    # ⚡ Bolt: Hoist content.lower() out of the generator to prevent repeated string allocations
+    content_lower = content.lower()
+    if any(p in content_lower for p in _INJECTION_PATTERNS):
         logger.warning(
             "Plugin skill '%s:%s' contains patterns that may indicate prompt injection", namespace, bare)
     banner = ""
