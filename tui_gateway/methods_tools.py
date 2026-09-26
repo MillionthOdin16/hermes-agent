@@ -1555,7 +1555,8 @@ def _(rid, params: dict) -> dict:
 
     # shell=True preserves the user-facing !cmd grammar (pipes, redirects and interpolation).
     # The child must not inherit credentials held by the long-lived gateway process.
-    env = _tools_mod("tools.environments.local").build_subprocess_env()
+    # 🛡️ Sentinel: Mitigating Credential Leakage by sanitizing environment variables.
+    env = _tools_mod("tools.environments.local").build_subprocess_env(scrub_secrets=True)
     return _captured_exec(
         rid, cmd, 30, shell=True, env=env, fail_code=5003,
         timeout_err=(5002, "command timed out (30s)"), on_result=done)
