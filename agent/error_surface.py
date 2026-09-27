@@ -82,7 +82,8 @@ def _is_custom_endpoint(provider: Optional[str]) -> bool:
 
 
 def _looks_like_stream_drop(message: str) -> bool:
-    return any(fragment in message.lower() for fragment in _STREAM_DROP_FRAGMENTS)
+    message_lower = message.lower()
+    return any(fragment in message_lower for fragment in _STREAM_DROP_FRAGMENTS)
 
 
 def _surface(layer: str, code: str, retryable: bool, provider: str = "", model: str = "") -> dict:

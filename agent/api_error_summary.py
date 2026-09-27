@@ -147,8 +147,10 @@ class ApiErrorSummaryMixin:
                 )
             current = current.__cause__ or current.__context__
 
-        if isinstance(error, ValueError) and any(marker in raw.lower() for marker in PROVIDER_STREAM_PARSE_MARKERS):
-            return f"Malformed provider streaming response: {raw[:300]}"
+        if isinstance(error, ValueError):
+            raw_lower = raw.lower()
+            if any(marker in raw_lower for marker in PROVIDER_STREAM_PARSE_MARKERS):
+                return f"Malformed provider streaming response: {raw[:300]}"
 
         prefix = _http_prefix(error)
         # Cloudflare / proxy HTML pages: grab the <title> (and Ray ID) for a clean summary

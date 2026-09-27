@@ -467,14 +467,16 @@ _CACHE_POINT_PATTERNS = ["anthropic.claude", "amazon.nova"]
 
 def _model_supports_tool_use(model_id: str) -> bool:
     """False for denylisted models; unknown models default to True."""
-    return not any(pattern in model_id.lower() for pattern in _NON_TOOL_CALLING_PATTERNS)
+    model_lower = model_id.lower()
+    return not any(pattern in model_lower for pattern in _NON_TOOL_CALLING_PATTERNS)
 
 
 def _model_supports_prompt_cache(model_id: str) -> bool:
     # An application-inference-profile ARN names no model: match on the wrapped model (cached lookup).
     if _APPLICATION_PROFILE_ARN_RE.search(model_id):
         model_id = _resolve_inference_profile_model_id(model_id)
-    return any(pattern in model_id.lower() for pattern in _CACHE_POINT_PATTERNS)
+    model_lower = model_id.lower()
+    return any(pattern in model_lower for pattern in _CACHE_POINT_PATTERNS)
 
 
 # --- Server-verdict cachePoint suppression ---
