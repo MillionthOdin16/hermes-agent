@@ -513,7 +513,7 @@ def _dispatch_quick(rid, params, session, name, arg):
         env = _tools_mod("tools.environments.local").build_subprocess_env()
         r = subprocess.run(qc.get("command", ""), shell=True, env=env, **_capture_run_kwargs(30))
         output = _joined_output(r)[:4000]
-        output = _tools_mod("agent.redact").redact_sensitive_text(output) if output else output
+        output = _tools_mod("agent.redact").redact_sensitive_text(output, force=True, redact_url_credentials=True) if output else output
         if r.returncode != 0:
             return _err(rid, 4018, output or f"quick command failed with exit code {r.returncode}")
         return _exec_out(rid, output)
