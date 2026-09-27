@@ -32,7 +32,8 @@ def is_thinking_timeout(classified: object, model: str, error_msg: str) -> bool:
         return False
     if get_reasoning_stale_timeout_floor(model) is None:
         return False
-    return any(p in (error_msg or "").lower() for p in _THINKING_TIMEOUT_SUBSTRINGS)
+    error_lower = (error_msg or "").lower()
+    return any(p in error_lower for p in _THINKING_TIMEOUT_SUBSTRINGS)
 
 
 def build_thinking_timeout_guidance(provider: str, model: str, model_label: Optional[str] = None) -> str:
