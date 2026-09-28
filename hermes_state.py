@@ -382,7 +382,9 @@ def format_session_db_unavailable(
     from hermes_state_user_copy import describe_storage_failure
     failure = describe_storage_failure(cause)
     gloss, action, hint = failure.gloss, failure.action, ""
-    if any(m in cause.lower() for m in _WAL_INCOMPAT_MARKERS):
+    # ⚡ Bolt: Hoisting lowercase conversion out of generator expression to avoid redundant allocations
+    cause_lower = cause.lower()
+    if any(m in cause_lower for m in _WAL_INCOMPAT_MARKERS):
         if failure.cause == "unknown":
             gloss, action = _NETWORK_DRIVE_GLOSS, _NETWORK_DRIVE_ACTION.replace("{profile_arg}", profile_arg)
         else:
