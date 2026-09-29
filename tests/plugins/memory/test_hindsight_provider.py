@@ -1127,6 +1127,18 @@ class TestShutdownRace:
         assert client.aretain_batch.call_count == 2
         assert provider._retain_queue.empty()
 
+    def test_shutdown_flushes_partial_retain_batch(self, provider_with_config):
+        """A graceful service restart must not lose the tail below retain_every_n_turns."""
+        p = provider_with_config(retain_every_n_turns=3, retain_async=False)
+        p.sync_turn("one", "1")
+        p.sync_turn("two", "2")
+        p._client.aretain_batch.assert_not_called()
+        p.shutdown()
+        p._client.aretain_batch.assert_called_once()
+        item = p._client.aretain_batch.call_args.kwargs["items"][0]
+        flat = item["content"]
+        assert "one" in flat and "two" in flat
+
 
 # ---------------------------------------------------------------------------
 # on_session_switch — flush + prefetch reset behavior
@@ -1777,3 +1789,10 @@ def test_append_mode_trims_retained_turns_without_dropping_any(provider, monkeyp
     assert len(provider._session_turns) == 1  # only the un-retained tail (turn 7)
     assert provider._last_retained_turn_count == 0
     assert len(shipped) == 6 and len(set(shipped)) == 6
+
+
+def test_shared_observation_scope_normalizes():
+    from plugins.memory.hindsight.settings import _normalize_observation_scopes
+    assert _normalize_observation_scopes("shared") == "shared"
+    assert _normalize_observation_scopes([]) is None
+    assert _normalize_observation_scopes([[], ["source:hermes"]]) == [[], ["source:hermes"]]

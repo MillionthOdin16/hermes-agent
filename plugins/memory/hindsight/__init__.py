@@ -1220,8 +1220,35 @@ class HindsightMemoryProvider(MemoryProvider):
             self._client.close()
 
     def shutdown(self) -> None:
-        logger.debug("Hindsight shutdown: stopping writer + waiting for background threads")
-        # Stop accepting retain jobs first so late sync_turn() calls are dropped.
+        logger.debug("Hindsight shutdown: flushing partial batch, then stopping writer + waiting for background threads")
+        # retain_every_n_turns may leave a 1..N-1 turn tail that has never been queued.
+        # Flush that tail BEFORE closing the admission gate. Completed boundaries are
+        # already queued and will be drained below, so the modulo guard avoids an
+        # unnecessary duplicate replace/reprocess on clean batch boundaries.
+        if (
+            self._auto_retain
+            and self._session_turns
+            and self._turn_counter % self._retain_every_n_turns
+            and not self._shutting_down.is_set()
+        ):
+            try:
+                document_id, update_mode = self._resolve_retain_target(self._document_id)
+                job = self._make_turn_retain_job(
+                    list(self._session_turns),
+                    document_id=document_id,
+                    update_mode=update_mode,
+                    label="flush-on-shutdown",
+                    track_ops=False,
+                )
+                self._enqueue_retain(job)
+                logger.debug(
+                    "Hindsight shutdown: queued partial batch of %d turn(s) for doc=%s",
+                    self._turn_counter % self._retain_every_n_turns,
+                    document_id,
+                )
+            except Exception as e:
+                logger.warning("Hindsight flush-on-shutdown failed: %s", e, exc_info=True)
+        # Stop accepting retain jobs only after the partial batch is safely queued.
         self._shutting_down.set()
         # The writer finishes in-flight work then exits on the sentinel; the
         # bounded join keeps shutdown predictable even if the daemon is wedged.

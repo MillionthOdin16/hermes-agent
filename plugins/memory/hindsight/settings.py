@@ -41,7 +41,7 @@ _PROVIDER_DEFAULT_MODELS = {
 }
 # The embedded daemon speaks OpenAI wire format for these providers.
 _OPENAI_WIRE_PROVIDERS = {"openai_compatible", "openrouter"}
-_OBSERVATION_SCOPE_KEYWORDS = {"per_tag", "combined", "all_combinations"}
+_OBSERVATION_SCOPE_KEYWORDS = {"shared", "per_tag", "combined", "all_combinations"}
 
 
 def _parse_int_setting(value: Any, default: int) -> int:
@@ -96,6 +96,9 @@ def _normalize_observation_scopes(value: Any) -> Any:
         return None
     if not isinstance(value, (list, tuple)):
         return None
+    # [] means zero scopes (server falls back to combined); [[]] is the global scope.
+    if len(value) == 0:
+        return None
     if all(isinstance(entry, str) for entry in value):  # flat tag list -> one scope
         value = [value]
     scopes = [
@@ -103,7 +106,8 @@ def _normalize_observation_scopes(value: Any) -> Any:
         else [entry.strip()] if isinstance(entry, str) and entry.strip() else []
         for entry in value
     ]
-    return [s for s in scopes if s] or None
+    # Empty inner lists are meaningful and represent the global observation scope.
+    return scopes or None
 
 
 def _sanitize_bank_segment(value: str) -> str:
