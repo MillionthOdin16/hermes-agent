@@ -1038,10 +1038,15 @@ def _collect_protected_skill_names(messages: List[Dict[str, Any]], prune_boundar
         m["content"].lower() for m in messages[tail_start:]
         if m.get("role") == "user" and isinstance(m.get("content"), str) and m["content"]
     ]
-    return {
-        skill.lower() for idx, skill in _skill_view_call_sites(messages)
-        if idx >= min(recent_start, tail_start) or any(skill.lower() in text for text in tail_user_texts)
-    }
+
+    # ⚡ Bolt: Hoisting string lowercasing out of the generator expression
+    active_skills = set()
+    for idx, skill in _skill_view_call_sites(messages):
+        skill_lower = skill.lower()
+        if idx >= min(recent_start, tail_start) or any(skill_lower in text for text in tail_user_texts):
+            active_skills.add(skill_lower)
+
+    return active_skills
 
 
 _CHARS_PER_TOKEN = CHARS_PER_TOKEN
