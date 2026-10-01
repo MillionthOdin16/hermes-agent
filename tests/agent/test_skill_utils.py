@@ -205,6 +205,18 @@ def test_iter_skill_index_files_prunes_skill_support_dirs(tmp_path):
     assert is_excluded_skill_path(package / "SKILL.md") is True
 
 
+def test_iter_skill_index_files_prunes_generated_index_dir(tmp_path):
+    real = tmp_path / "software-development"
+    real.mkdir()
+    (real / "SKILL.md").write_text("---\nname: software-development\n---\n", encoding="utf-8")
+    generated = tmp_path / ".index.L1"
+    generated.mkdir()
+    (generated / "SKILL.md").write_text("---\nname: should-not-load\n---\n", encoding="utf-8")
+
+    assert list(iter_skill_index_files(tmp_path, "SKILL.md")) == [real / "SKILL.md"]
+    assert is_excluded_skill_path(generated / "SKILL.md", root=tmp_path) is True
+
+
 def test_iter_skill_index_files_keeps_support_named_categories(tmp_path):
     """A category named scripts/templates/assets/references is still valid."""
     scripts_skill = tmp_path / "scripts" / "bash-helper"

@@ -937,6 +937,26 @@ class TestSkillViewCollisionDetection:
         assert "hint" in result
 
 
+    def test_generated_hidden_index_does_not_collide_with_real_skill(self, tmp_path):
+        # Generated .index.L1 category summaries are metadata, not legacy skills.
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        _make_skill(local_dir, "software-development", body="REAL SKILL")
+        index_dir = local_dir / ".index.L1"
+        index_dir.mkdir()
+        (index_dir / "software-development.md").write_text(
+            "# software-development (13)\n\n- generated category summary\n", encoding="utf-8"
+        )
+
+        p1, p2 = self._patch_dirs(local_dir, [])
+        with p1, p2:
+            raw = skill_view("software-development")
+
+        result = json.loads(raw)
+        assert result["success"] is True
+        assert "REAL SKILL" in result["content"]
+
+
     def test_support_markdown_does_not_collide_with_real_skill(self, tmp_path):
         """Supporting reference docs named <skill>.md are not skills.
 

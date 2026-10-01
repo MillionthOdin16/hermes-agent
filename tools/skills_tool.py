@@ -17,7 +17,9 @@ from hermes_constants import get_hermes_home
 from tools.registry import registry, tool_error
 from hermes_cli.config import cfg_get
 from agent.skill_utils import (
-    EXCLUDED_SKILL_DIRS as _EXCLUDED_SKILL_DIRS, is_skill_support_path as _is_skill_support_path)
+    EXCLUDED_SKILL_DIRS as _EXCLUDED_SKILL_DIRS,
+    is_excluded_skill_path as _is_excluded_skill_path,
+    is_skill_support_path as _is_skill_support_path)
 from tools.skills_tool_setup import (  # noqa: F401
     SkillReadinessStatus, _build_setup_note, _capture_required_environment_variables,
     _get_required_environment_variables, _is_env_var_persisted, _is_remote_env_backend)
@@ -361,7 +363,8 @@ def _collect_skill_candidates(name, local_category_name, all_dirs):
         # Legacy flat <name>.md anywhere under the dir. Markdown owned by an ancestor
         # directory skill loads through file_path and must not shadow a real skill.
         for found_md in search_dir.rglob(f"{name}.md"):
-            if (found_md.name != "SKILL.md" and not _is_skill_support_path(found_md)
+            if (found_md.name != "SKILL.md"
+                    and not _is_excluded_skill_path(found_md, root=search_dir)
                     and not _is_package_owned_markdown(found_md, search_dir)):
                 _record(None, found_md)
     return candidates
