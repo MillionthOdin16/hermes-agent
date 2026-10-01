@@ -100,7 +100,7 @@ export function AuthWidget({ className }: AuthWidgetProps) {
         <button
           type="button"
           onClick={() => window.location.reload()}
-          className="self-start underline underline-offset-2 hover:text-foreground"
+          className="self-start underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current/40 rounded"
         >
           Reload page
         </button>
@@ -114,12 +114,13 @@ export function AuthWidget({ className }: AuthWidgetProps) {
     return (
       <div
         className={cn(
-          "h-9 px-5 py-2 text-[0.65rem] text-muted-foreground/40",
+          "h-9 px-5 py-2 text-[0.65rem] text-muted-foreground/40 flex items-center",
           className,
         )}
         aria-busy="true"
+        aria-label="Loading authentication status"
       >
-        …
+        <span aria-hidden="true">…</span>
       </div>
     );
   }
