@@ -1384,7 +1384,9 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
                 return await sender(chat_id, content, reply_to)
             except Exception as exc:
                 last_exc = exc
-                if any(k in str(exc).lower() for k in self._PERMANENT_SEND_ERRORS + ("bad request",)):
+                # ⚡ Bolt: Hoisting invariant string operations out of loop
+                exc_lower = str(exc).lower()
+                if any(k in exc_lower for k in self._PERMANENT_SEND_ERRORS + ("bad request",)):
                     break  # permanent — don't retry
                 if attempt < 2:
                     delay = 1.0 * (2 ** attempt)
@@ -1393,7 +1395,9 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
 
         error_msg = (str(last_exc) or type(last_exc).__name__) if last_exc else "Unknown error"
         logger.error("[%s] Send failed: %s", self._log_tag, error_msg)
-        retryable = not any(k in error_msg.lower() for k in self._PERMANENT_SEND_ERRORS)
+        # ⚡ Bolt: Hoisting invariant string operations out of loop
+        error_msg_lower = error_msg.lower()
+        retryable = not any(k in error_msg_lower for k in self._PERMANENT_SEND_ERRORS)
         return SendResult(success=False, error=error_msg, retryable=retryable)
 
     @staticmethod

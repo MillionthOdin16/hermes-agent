@@ -503,9 +503,11 @@ class AIAgent(
     def _is_provider_stream_parse_error(self, error: BaseException) -> bool:
         """True for a malformed Anthropic event-stream frame (surfaced by the SDK as a plain ``ValueError``);
         that is wire trouble, not local validation, so it follows the truncated-JSON retry path."""
-        return (getattr(self, "api_mode", None) == "anthropic_messages" and isinstance(error, ValueError)
-                and not isinstance(error, (UnicodeEncodeError, json.JSONDecodeError))
-                and any(marker in str(error).strip().lower() for marker in PROVIDER_STREAM_PARSE_MARKERS))
+        if getattr(self, "api_mode", None) != "anthropic_messages" or not isinstance(error, ValueError) or isinstance(error, (UnicodeEncodeError, json.JSONDecodeError)):
+            return False
+        # ⚡ Bolt: Hoisting invariant string operations out of loop
+        err_msg = str(error).strip().lower()
+        return any(marker in err_msg for marker in PROVIDER_STREAM_PARSE_MARKERS)
 
     _log_stream_retry = _forward("agent.stream_diag", "log_stream_retry")
     _emit_stream_drop = _forward("agent.stream_diag", "emit_stream_drop")

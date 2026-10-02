@@ -312,7 +312,9 @@ def _repair_failure_consumes_attempt(exc: BaseException) -> bool:
         return (error_code & 0xFF) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
     # Older sqlite3 without result-code attributes: narrow message match only, never turning generic
     # "disk is full"/"readonly" into permanent failures.
-    return any(m in str(exc).lower() for m in ("file is not a database", "database disk image is malformed"))
+    # ⚡ Bolt: Hoisting invariant string operations out of loop
+    exc_lower = str(exc).lower()
+    return any(m in exc_lower for m in ("file is not a database", "database disk image is malformed"))
 
 
 def _repair_ledger_path(db_path: Path) -> Path:
@@ -694,7 +696,9 @@ def _copy_database_snapshot(source_path: Path, destination_path: Path, *,
 
 def _schema_not_built(exc: BaseException) -> bool:
     """``no such table/column``: FTS5 / core tables not created yet (brand new file mid-init)."""
-    return any(m in str(exc).lower() for m in ("no such table", "no such column"))
+    # ⚡ Bolt: Hoisting invariant string operations out of loop
+    exc_lower = str(exc).lower()
+    return any(m in exc_lower for m in ("no such table", "no such column"))
 
 
 # Hermes-owned FTS5 objects: the virtual tables and their shadow b-trees. Full-matched, so a
