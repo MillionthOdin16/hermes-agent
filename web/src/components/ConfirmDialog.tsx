@@ -1,4 +1,5 @@
 import { Button } from "@nous-research/ui/ui/components/button";
+import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -112,7 +113,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={loading}
           >
-            {loading ? "…" : confirmLabel}
+            {loading ? <span className="flex items-center gap-2"><Spinner className="w-3 h-3" /> <span className="sr-only">Loading</span></span> : confirmLabel}
           </Button>
         </div>
       </div>
