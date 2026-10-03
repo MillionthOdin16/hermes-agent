@@ -394,6 +394,9 @@ export function ChatSidebar({
               'hover:underline disabled:no-underline'
             )}
             title={modelName === '—' ? 'switch model' : modelName}
+            aria-label={modelName === '—' ? 'switch model' : `switch model, current model: ${modelName}`}
+            aria-haspopup="dialog"
+            aria-expanded={modelOpen}
           >
             <span className="flex min-w-0 max-w-full items-center gap-1">
               <span className="truncate">{modelLabel}</span>
