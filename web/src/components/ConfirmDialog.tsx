@@ -1,4 +1,5 @@
 import { Button } from "@nous-research/ui/ui/components/button";
+import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -111,8 +112,9 @@ export function ConfirmDialog({
             destructive={destructive}
             onClick={onConfirm}
             disabled={loading}
+            prefix={loading ? <Spinner /> : undefined}
           >
-            {loading ? "…" : confirmLabel}
+            {confirmLabel}
           </Button>
         </div>
       </div>
