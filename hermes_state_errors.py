@@ -19,9 +19,11 @@ _MALFORMED_DB_MARKERS = (*_MALFORMED_SCHEMA_MARKERS, "database disk image is mal
 def is_malformed_db_error(exc: BaseException) -> bool:
     """Malformed-schema OR generic corrupt-image error. Diagnostics / offline
     recovery only — runtime repair must use :func:`is_malformed_schema_error`."""
-    return isinstance(exc, sqlite3.DatabaseError) and any(
-        marker in str(exc).lower() for marker in _MALFORMED_DB_MARKERS
-    )
+    if not isinstance(exc, sqlite3.DatabaseError):
+        return False
+    # ⚡ Bolt: Hoisted loop-invariant str().lower() outside generator to prevent redundant allocations
+    err_msg = str(exc).lower()
+    return any(marker in err_msg for marker in _MALFORMED_DB_MARKERS)
 
 
 # SQLITE_IOERR as a substring (wrapped strings still classify).
@@ -43,17 +45,21 @@ def _is_no_more_rows(exc: sqlite3.Error) -> bool:
 def is_transient_sqlite_error(exc: BaseException) -> bool:
     """"Busy right now", not "damaged": one predicate so retry and the HTTP
     503-vs-500 split cannot drift apart."""
-    return isinstance(exc, sqlite3.OperationalError) and any(
-        marker in str(exc).lower() for marker in _TRANSIENT_SQLITE_MARKERS
-    )
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    # ⚡ Bolt: Hoisted loop-invariant str().lower() outside generator to prevent redundant allocations
+    err_msg = str(exc).lower()
+    return any(marker in err_msg for marker in _TRANSIENT_SQLITE_MARKERS)
 
 
 def is_malformed_schema_error(exc: BaseException) -> bool:
     """Only SQLite's explicit malformed-schema text: a generic "disk image is
     malformed" may be any B-tree page, so runtime repair must fail closed on it."""
-    return isinstance(exc, sqlite3.DatabaseError) and any(
-        marker in str(exc).lower() for marker in _MALFORMED_SCHEMA_MARKERS
-    )
+    if not isinstance(exc, sqlite3.DatabaseError):
+        return False
+    # ⚡ Bolt: Hoisted loop-invariant str().lower() outside generator to prevent redundant allocations
+    err_msg = str(exc).lower()
+    return any(marker in err_msg for marker in _MALFORMED_SCHEMA_MARKERS)
 
 
 # "Filesystem cannot accept another write" substrings (OSError, sqlite3, wrapped RPC strings).
