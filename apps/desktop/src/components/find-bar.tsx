@@ -316,7 +316,7 @@ export function FindBar() {
       <Tip label={t.findInPage.previous}>
         <button
           aria-label={t.findInPage.previous}
-          className="flex h-7 w-7 items-center justify-center rounded text-(--ui-text-secondary) hover:bg-(--ui-control-hover-background)"
+          className="flex h-7 w-7 items-center justify-center rounded text-(--ui-text-secondary) transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:bg-(--ui-control-hover-background) focus-visible:text-foreground focus-visible:outline-none"
           onClick={findPrevious}
           type="button"
         >
@@ -329,7 +329,7 @@ export function FindBar() {
       <Tip label={t.findInPage.next}>
         <button
           aria-label={t.findInPage.next}
-          className="flex h-7 w-7 items-center justify-center rounded text-(--ui-text-secondary) hover:bg-(--ui-control-hover-background)"
+          className="flex h-7 w-7 items-center justify-center rounded text-(--ui-text-secondary) transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:bg-(--ui-control-hover-background) focus-visible:text-foreground focus-visible:outline-none"
           onClick={findNext}
           type="button"
         >
@@ -341,7 +341,7 @@ export function FindBar() {
 
       <button
         aria-label={t.common.close}
-        className="flex h-7 w-7 items-center justify-center rounded text-(--ui-text-secondary) hover:bg-(--ui-control-hover-background)"
+        className="flex h-7 w-7 items-center justify-center rounded text-(--ui-text-secondary) transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:bg-(--ui-control-hover-background) focus-visible:text-foreground focus-visible:outline-none"
         onClick={closeFindBar}
         type="button"
       >
