@@ -383,28 +383,33 @@ def _rich_text_from_ansi(text: str) -> _RichText:
     return _RichText.from_ansi(text or "")
 
 
+_STRIP_MARKDOWN_SUBS = [
+    (re.compile(r"^\s{0,3}(?:[-_]\s*){3,}$", flags=re.MULTILINE), ""),
+    (re.compile(r"^\s{0,3}(?:\*\s*){3}\s*$", flags=re.MULTILINE), ""),
+    (re.compile(r"^\s{0,3}#{1,6}\s+", flags=re.MULTILINE), ""),
+    (re.compile(r"(```+|~~~+)"), ""),
+    (re.compile(r"`([^`]*)`"), r"\1"),
+    (re.compile(r"!\[([^\]]*)\]\([^\)]*\)"), r"\1"),
+    (re.compile(r"\[([^\]]+)\]\([^\)]*\)"), r"\1"),
+    (re.compile(r"\*\*\*([^*]+)\*\*\*"), r"\1"),
+    (re.compile(r"(?<!\w)___([^_]+)___(?!\w)"), r"\1"),
+    (re.compile(r"\*\*([^*]+)\*\*"), r"\1"),
+    (re.compile(r"(?<!\w)__([^_]+)__(?!\w)"), r"\1"),
+    (re.compile(r"\*([^\s*][^*]*?[^\s*])\*"), r"\1"),
+    (re.compile(r"(?<!\w)_([^_]+)_(?!\w)"), r"\1"),
+    (re.compile(r"~~([^~]+)~~"), r"\1"),
+    (re.compile(r"\n{3,}"), "\n\n"),
+]
+
 def _strip_markdown_syntax(text: str) -> str:
     """Best-effort markdown marker removal for plain-text display."""
     from cli import _rich_text_from_ansi
     plain = _rich_text_from_ansi(text or "").plain
+    # ⚡ Bolt: Hoisting regex compilations for markdown stripping to avoid repeatedly recompiling.
     # HR markers: "-"/"_" runs of 3+, but "*" only when exactly 3 (cron schedules "* * * * *").
-    plain = re.sub(r"^\s{0,3}(?:[-_]\s*){3,}$", "", plain, flags=re.MULTILINE)
-    plain = re.sub(r"^\s{0,3}(?:\*\s*){3}\s*$", "", plain, flags=re.MULTILINE)
-    plain = re.sub(r"^\s{0,3}#{1,6}\s+", "", plain, flags=re.MULTILINE)
     # Blockquotes, lists, and checkboxes are preserved because they carry structure.
-    plain = re.sub(r"(```+|~~~+)", "", plain)
-    plain = re.sub(r"`([^`]*)`", r"\1", plain)
-    plain = re.sub(r"!\[([^\]]*)\]\([^\)]*\)", r"\1", plain)
-    plain = re.sub(r"\[([^\]]+)\]\([^\)]*\)", r"\1", plain)
-    plain = re.sub(r"\*\*\*([^*]+)\*\*\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)___([^_]+)___(?!\w)", r"\1", plain)
-    plain = re.sub(r"\*\*([^*]+)\*\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)__([^_]+)__(?!\w)", r"\1", plain)
-    # `*emphasis*` only when the inner text is non-whitespace (cron expressions again).
-    plain = re.sub(r"\*([^\s*][^*]*?[^\s*])\*", r"\1", plain)
-    plain = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", plain)
-    plain = re.sub(r"~~([^~]+)~~", r"\1", plain)
-    plain = re.sub(r"\n{3,}", "\n\n", plain)
+    for pattern, repl in _STRIP_MARKDOWN_SUBS:
+        plain = pattern.sub(repl, plain)
     return plain.strip("\n")
 
 
