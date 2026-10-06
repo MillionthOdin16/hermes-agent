@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Check } from "lucide-react";
+import { Check, Globe } from "lucide-react";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { BottomSheet } from "@nous-research/ui/ui/components/bottom-sheet";
 import { Typography } from "@nous-research/ui/ui/components/typography/index";
@@ -66,6 +66,7 @@ export function LanguageSwitcher({ collapsed = false, dropUp = false }: Language
     <div ref={containerRef} className="relative inline-flex">
       <Button
         ghost
+        size={collapsed ? "icon" : undefined}
         onClick={() => setOpen((v) => !v)}
         title={t.language.switchTo}
         aria-label={t.language.switchTo}
@@ -77,11 +78,14 @@ export function LanguageSwitcher({ collapsed = false, dropUp = false }: Language
         )}
       >
         <span className="inline-flex items-center gap-1.5">
-          <Typography
-            className="hidden sm:inline text-display tracking-wide text-xs"
-          >
-            {locale === "en" ? "EN" : current.name}
-          </Typography>
+          <Globe className="h-3.5 w-3.5" />
+          {!collapsed && (
+            <Typography
+              className="hidden sm:inline text-display tracking-wide text-xs"
+            >
+              {locale === "en" ? "EN" : current.name}
+            </Typography>
+          )}
         </span>
       </Button>
 
