@@ -118,6 +118,7 @@ export function AuthWidget({ className }: AuthWidgetProps) {
           className,
         )}
         aria-busy="true"
+        aria-label="Loading authentication status"
       >
         …
       </div>
