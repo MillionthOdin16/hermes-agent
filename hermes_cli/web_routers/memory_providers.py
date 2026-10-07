@@ -360,6 +360,9 @@ def _install_memory_provider_pip_dependencies(dependencies: List[str]) -> List[D
 
 def _run_setup_step(results: list, kind: str, name: str, command: str, status_of, **kwargs) -> Optional[int]:
     """Run a setup command, append its result row; returncode or None on spawn failure."""
+
+    if "env" not in kwargs:
+        kwargs["env"] = build_subprocess_env()
     try:
         completed = _run_setup_command(command if kwargs.get("shell") else shlex.split(command), display=command, **kwargs)
     except Exception as exc:

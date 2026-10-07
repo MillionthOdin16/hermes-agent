@@ -395,9 +395,10 @@ def _install_root() -> Path:
 
 def _run_bootstrap(cwd: Path, commands: List[str]) -> None:
     """Execute bootstrap commands in *cwd*. Raise CatalogError on first failure."""
+    from tools.environments.local import build_subprocess_env
     for cmd in commands:
         _say(f"  $ {cmd}", Colors.DIM)
-        rc = subprocess.run(cmd, cwd=str(cwd), shell=True).returncode
+        rc = subprocess.run(cmd, cwd=str(cwd), shell=True, env=build_subprocess_env()).returncode
         if rc != 0:
             raise CatalogError(f"bootstrap step failed (exit {rc}): {cmd}")
 
