@@ -147,8 +147,11 @@ def _memory_cards() -> list[dict[str, Any]]:
     return cards
 
 
+# ⚡ Bolt: Hoisting regex compilations...
+_TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+
 def _tokenize(text: str) -> set[str]:
-    return {t for t in re.split(r"[^a-z0-9]+", text.lower()) if len(t) >= 3}
+    return {t for t in _TOKEN_SPLIT_RE.split(text.lower()) if len(t) >= 3}
 
 
 def _memory_skill_edges(memory_cards: list[dict[str, Any]], skills: list[SkillNode]) -> list[tuple[str, str]]:
