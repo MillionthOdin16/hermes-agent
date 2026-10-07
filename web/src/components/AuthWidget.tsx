@@ -99,8 +99,9 @@ export function AuthWidget({ className }: AuthWidgetProps) {
         <span>{error}</span>
         <button
           type="button"
+          aria-label="Reload page"
           onClick={() => window.location.reload()}
-          className="self-start underline underline-offset-2 hover:text-foreground"
+          className="self-start underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current/40 rounded px-1 -ml-1"
         >
           Reload page
         </button>
