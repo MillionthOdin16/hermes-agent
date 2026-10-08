@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from tools.environments.local import build_subprocess_env
 from agent.verify.recipes import Recipe
 
 DEFAULT_PHASE_TIMEOUT = 600.0
@@ -96,7 +97,9 @@ def _run_phase_command(
 ) -> PhaseResult:
     started = time.monotonic()
     try:
-        proc = subprocess.run(command, cwd=str(root), timeout=timeout, **_SUBPROCESS_KW)
+        kwargs = _SUBPROCESS_KW.copy()
+        kwargs["env"] = build_subprocess_env()
+        proc = subprocess.run(command, cwd=str(root), timeout=timeout, **kwargs)
         output, exit_code, timed_out = proc.stdout or "", proc.returncode, False
     except subprocess.TimeoutExpired as exc:
         raw = exc.output
@@ -168,8 +171,10 @@ def _run_start_phase(
     port = port_override or recipe.port or 8000
     url = f"http://127.0.0.1:{port}{recipe.readiness_path}"
     started = time.monotonic()
+    kwargs = _SUBPROCESS_KW.copy()
+    kwargs["env"] = build_subprocess_env()
     # start_new_session: own process group for clean teardown.
-    proc = subprocess.Popen(recipe.start, cwd=str(root), start_new_session=True, **_SUBPROCESS_KW)
+    proc = subprocess.Popen(recipe.start, cwd=str(root), start_new_session=True, **kwargs)
     output = ""
     try:
         ready, status, error = _poll_readiness(url, ready_timeout)
