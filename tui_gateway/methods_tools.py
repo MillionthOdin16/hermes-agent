@@ -511,12 +511,17 @@ def _dispatch_quick(rid, params, session, name, arg):
     if qc.get("type") == "exec":
         # Sanitized env: the TUI server process holds every API key in os.environ.
         env = _tools_mod("tools.environments.local").build_subprocess_env()
-        r = subprocess.run(qc.get("command", ""), shell=True, env=env, **_capture_run_kwargs(30))
-        output = _joined_output(r)[:4000]
-        output = _tools_mod("agent.redact").redact_sensitive_text(output) if output else output
-        if r.returncode != 0:
-            return _err(rid, 4018, output or f"quick command failed with exit code {r.returncode}")
-        return _exec_out(rid, output)
+
+        def done(r):
+            output = _joined_output(r)[:4000]
+            output = _tools_mod("agent.redact").redact_sensitive_text(output) if output else output
+            if r.returncode != 0:
+                return _err(rid, 4018, output or f"quick command failed with exit code {r.returncode}")
+            return _exec_out(rid, output)
+
+        return _captured_exec(
+            rid, qc.get("command", ""), 30, shell=True, env=env, fail_code=5003,
+            timeout_err=(5002, "command timed out (30s)"), on_result=done)
     return _ok(rid, {"type": "alias", "target": qc.get("target", "")}) if qc.get("type") == "alias" else None
 
 
