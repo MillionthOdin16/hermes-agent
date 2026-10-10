@@ -1,0 +1,4 @@
+## 2026-06-25 - Prevent Credential Leakage in Subprocess Calls
+**Vulnerability:** Found `subprocess.run(shell=True)` calls that passed sensitive environment variables from `os.environ` into child processes without sanitization (e.g. `hermes_cli/goals.py`'s `run_gate` function).
+**Learning:** Shell subprocesses inherit the parent process's environment by default, which can lead to credentials (like API keys) leaking in the background or being accessed by arbitrary user commands or commands injected by an attacker. The specific vulnerability here is credential leakage, not just command injection, though the environment sanitization also provides some defense-in-depth against malicious commands.
+**Prevention:** Always use `build_subprocess_env()` from `tools.environments.local` to create a sanitized environment free from sensitive credentials when invoking subprocesses using `shell=True`, and provide this environment explicitly via the `env=` kwarg.
