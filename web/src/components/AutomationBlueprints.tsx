@@ -197,7 +197,7 @@ export function AutomationBlueprints({ profile, onCreated }: AutomationBlueprint
   if (blueprints === null) {
     return (
       <div className="flex items-center gap-2 opacity-70">
-        <Spinner className="h-4 w-4" /> Loading blueprints…
+        <div aria-label="Loading blueprints"><Spinner className="h-4 w-4" /></div> Loading blueprints…
       </div>
     );
   }

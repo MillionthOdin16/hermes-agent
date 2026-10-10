@@ -177,7 +177,7 @@ function EditorBody({
           <Label htmlFor="skill-editor-content">SKILL.md</Label>
           {loading ? (
             <div className="flex items-center justify-center py-16">
-              <Spinner className="text-xl text-primary" />
+              <div aria-label="Loading skill"><Spinner className="text-xl text-primary" /></div>
             </div>
           ) : (
             <textarea

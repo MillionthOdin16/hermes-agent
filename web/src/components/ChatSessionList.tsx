@@ -153,7 +153,7 @@ export function ChatSessionList({
     if (loading && sessions === null) {
       return (
         <div className="flex items-center justify-center gap-2 px-2 py-6 text-xs text-text-secondary">
-          <Spinner /> {t.common.loading}
+          <div aria-label="Loading sessions"><Spinner /></div> {t.common.loading}
         </div>
       );
     }

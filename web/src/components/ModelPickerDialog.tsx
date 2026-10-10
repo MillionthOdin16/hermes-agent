@@ -511,7 +511,7 @@ function ProviderColumn({
     <div className="border-r border-border overflow-y-auto">
       {loading && (
         <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
-          <Spinner className="text-xs" /> loading…
+          <div aria-label="Loading models"><Spinner className="text-xs" /></div> loading…
         </div>
       )}
 
