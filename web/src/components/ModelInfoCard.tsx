@@ -37,7 +37,7 @@ export function ModelInfoCard({
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-        <Spinner className="text-xs" />
+        <div aria-label="Loading model info"><Spinner className="text-xs" /></div>
         Loading model info…
       </div>
     );

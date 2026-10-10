@@ -260,7 +260,7 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
 
           {phase === "starting" && (
             <div className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
-              <Spinner />
+              <div aria-label="Initiating login"><Spinner /></div>
               {t.oauth.initiatingLogin}
             </div>
           )}
@@ -306,7 +306,7 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
 
           {phase === "submitting" && (
             <div className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
-              <Spinner />
+              <div aria-label="Exchanging code"><Spinner /></div>
               {t.oauth.exchangingCode}
             </div>
           )}
@@ -352,7 +352,7 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
                 {t.oauth.reOpenVerification}
               </a>
               <div className="flex items-center gap-2 text-xs text-muted-foreground border-t border-border pt-3">
-                <Spinner className="text-xs" />
+                <div aria-label="Waiting for authentication"><Spinner className="text-xs" /></div>
                 {t.oauth.waitingAuth}
               </div>
             </>
