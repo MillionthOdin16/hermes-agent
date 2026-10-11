@@ -181,6 +181,10 @@ def _captured_exec(rid, cmd, timeout: int, *, on_result, timeout_err: tuple, fai
                    shell: bool = False, env: "dict | None" = None) -> dict:
     """Run ``cmd`` captured (see ``_capture_run_kwargs``) and hand the CompletedProcess to
     ``on_result``; TimeoutExpired → ``timeout_err`` (code, message), other errors → ``fail_code``."""
+    if env is None:
+        # Prevent credential leakage when spawning un-isolated subprocesses
+        env = _tools_mod("tools.environments.local").build_subprocess_env()
+
     try:
         return on_result(subprocess.run(cmd, cwd=os.getcwd(), shell=shell, env=env, **_capture_run_kwargs(timeout)))
     except subprocess.TimeoutExpired:
