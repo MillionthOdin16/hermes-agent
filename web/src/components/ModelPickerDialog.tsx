@@ -510,7 +510,12 @@ function ProviderColumn({
   return (
     <div className="border-r border-border overflow-y-auto">
       {loading && (
-        <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
+        <div
+          className="flex items-center gap-2 p-4 text-xs text-muted-foreground"
+          aria-busy="true"
+          aria-label="Loading providers"
+          role="status"
+        >
           <Spinner className="text-xs" /> loading…
         </div>
       )}
