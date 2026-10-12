@@ -96,7 +96,8 @@ def _run_phase_command(
 ) -> PhaseResult:
     started = time.monotonic()
     try:
-        proc = subprocess.run(command, cwd=str(root), timeout=timeout, **_SUBPROCESS_KW)
+        from tools.environments.local import build_subprocess_env
+        proc = subprocess.run(command, cwd=str(root), timeout=timeout, env=build_subprocess_env(), **_SUBPROCESS_KW)
         output, exit_code, timed_out = proc.stdout or "", proc.returncode, False
     except subprocess.TimeoutExpired as exc:
         raw = exc.output
