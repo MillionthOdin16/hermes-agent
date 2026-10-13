@@ -67,6 +67,7 @@ export function ThemeSwitcher({ collapsed = false, dropUp = false }: ThemeSwitch
         size={collapsed ? "icon" : undefined}
         onClick={() => setOpen((o) => !o)}
         className={cn(
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current/40",
           collapsed
             ? "text-text-secondary hover:text-foreground hover:bg-transparent"
             : "px-2 py-1 normal-case tracking-normal font-normal text-xs text-text-secondary hover:text-foreground",
