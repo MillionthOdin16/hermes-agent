@@ -73,6 +73,7 @@ export function LanguageSwitcher({ collapsed = false, dropUp = false }: Language
         aria-expanded={open}
         className={cn(
           "px-2 py-1 normal-case tracking-normal font-normal text-xs text-text-secondary hover:text-foreground",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current/40",
           collapsed && "hover:bg-transparent",
         )}
       >
