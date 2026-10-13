@@ -374,11 +374,13 @@ def run_gate(gate: GoalGate, *, cwd: Optional[str] = None) -> Tuple[bool, int, s
     """Run one gate through the shell. Returns ``(passed, exit_code, output_tail)``; a timeout kills
     the process and counts as exit code -1."""
     try:
+        from tools.environments.local import build_subprocess_env
+        env = build_subprocess_env()
         # utf-8/replace: operator-configured output is arbitrary bytes; strict codepage decoding of
         # one unmappable byte (emoji/CJK on a non-UTF-8 Windows console) kills the reader thread and
         # the tail the agent needs arrives empty.
         proc = subprocess.run(
-            gate.command, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            gate.command, shell=True, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=max(1, int(gate.timeout_seconds)), cwd=cwd or None,
         )
         combined = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
