@@ -1,0 +1,4 @@
+## 2026-06-25 - [Fix Credential Leakage in goal gates]
+**Vulnerability:** Credential leakage vulnerability in goal gates execution. Using `subprocess.run(..., shell=True)` directly exposes the agent configuration to credential leakage as environment variables are passed to child processes.
+**Learning:** `run_gate` in `hermes_cli/goals.py` executes user-configured goals (gates) using `shell=True` without sanitizing the environment. The gateway process holds credentials and sensitive information in `os.environ`, which would be inherited by the shell and executed command.
+**Prevention:** Always secure `subprocess.run(..., shell=True)` calls by sanitizing the environment using `tools.environments.local.build_subprocess_env()` to mitigate the risk of exfiltrating sensitive environment variables.
