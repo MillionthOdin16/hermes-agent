@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 
 /**
  * Lightweight markdown renderer for LLM output.
@@ -9,7 +9,9 @@ import { useMemo, type ReactNode } from "react";
  * appears to hug the final character instead of wrapping onto a new line
  * after a block element (paragraph/list/code/…).
  */
-export function Markdown({
+// ⚡ Bolt: Memoize Markdown component to prevent full-tree re-renders when parent state updates.
+// This is critical for performance during streaming, as only the latest blocks need to re-render.
+export const Markdown = memo(function Markdown({
   content,
   highlightTerms,
   streaming,
@@ -34,7 +36,7 @@ export function Markdown({
       {blocks.length === 0 && caret}
     </div>
   );
-}
+});
 
 function StreamingCaret() {
   return (
@@ -156,7 +158,9 @@ function parseBlocks(text: string): BlockNode[] {
 /*  Block renderer                                                     */
 /* ------------------------------------------------------------------ */
 
-function Block({
+// ⚡ Bolt: Memoize Block component to skip expensive DOM diffing for parsed markdown blocks
+// whose content hasn't changed between streaming ticks.
+const Block = memo(function Block({
   block,
   highlightTerms,
   caret,
@@ -225,7 +229,7 @@ function Block({
         </p>
       );
   }
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  Inline parser + renderer                                           */
@@ -282,7 +286,9 @@ function parseInline(text: string): InlineNode[] {
   return nodes;
 }
 
-function InlineContent({
+// ⚡ Bolt: Memoize InlineContent component to skip expensive regex parsing for inline text
+// (bold, italic, links) that has already been rendered in previous streaming ticks.
+const InlineContent = memo(function InlineContent({
   text,
   highlightTerms,
 }: {
@@ -356,10 +362,10 @@ function InlineContent({
       })}
     </>
   );
-}
+});
 
 /** Highlight search terms within a plain text string. */
-function HighlightedText({ text, terms }: { text: string; terms?: string[] }) {
+const HighlightedText = memo(function HighlightedText({ text, terms }: { text: string; terms?: string[] }) {
   if (!terms || terms.length === 0) return <>{text}</>;
 
   // Build a regex that matches any of the search terms (case-insensitive)
@@ -380,4 +386,4 @@ function HighlightedText({ text, terms }: { text: string; terms?: string[] }) {
       )}
     </>
   );
-}
+});
