@@ -1408,16 +1408,23 @@ class SessionSessionsMixin:
         if not session_id:
             return [session_id]
         chain: List[str] = []
-        current = session_id
+        seen = set()
         with self._read_ctx() as conn:
-            while current and current not in chain and len(chain) < 100:
-                chain.append(current)
-                row = conn.execute(
-                    "SELECT parent_session_id FROM sessions WHERE id = ?", (current,),
-                ).fetchone()
-                if row is None:
+            rows = conn.execute(
+                "WITH RECURSIVE lineage(id, parent_id) AS ( "
+                "SELECT id, parent_session_id FROM sessions WHERE id = ? "
+                "UNION ALL "
+                "SELECT s.id, s.parent_session_id "
+                "FROM sessions s "
+                "JOIN lineage l ON l.parent_id = s.id "
+                "LIMIT 100) "
+                "SELECT id FROM lineage", (session_id,)
+            ).fetchall()
+            for (id_,) in rows:
+                if id_ in seen:
                     break
-                current = row[0]
+                chain.append(id_)
+                seen.add(id_)
         return list(reversed(chain)) or [session_id]
 
     def search_sessions(
