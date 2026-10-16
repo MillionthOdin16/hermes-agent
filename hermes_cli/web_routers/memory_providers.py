@@ -361,7 +361,8 @@ def _install_memory_provider_pip_dependencies(dependencies: List[str]) -> List[D
 def _run_setup_step(results: list, kind: str, name: str, command: str, status_of, **kwargs) -> Optional[int]:
     """Run a setup command, append its result row; returncode or None on spawn failure."""
     try:
-        completed = _run_setup_command(command if kwargs.get("shell") else shlex.split(command), display=command, **kwargs)
+        from tools.environments.local import build_subprocess_env
+        completed = _run_setup_command(command if kwargs.get("shell") else shlex.split(command), display=command, env=build_subprocess_env(), **kwargs)
     except Exception as exc:
         results.append(_command_result(kind=kind, name=name, status=status_of(None), command=command, error=str(exc)))
         return None
