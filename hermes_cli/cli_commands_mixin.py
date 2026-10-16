@@ -2413,7 +2413,8 @@ class CLICommandsMixin:
                 subprocess.call([*shlex.split(editor), path])
             except Exception:
                 # Fall back to a bare invocation (editor value may not be argv-splittable everywhere).
-                subprocess.call(f"{editor} {shlex.quote(path)}", shell=True)
+                from tools.environments.local import build_subprocess_env
+                subprocess.call(f"{editor} {shlex.quote(path)}", shell=True, env=build_subprocess_env())
             with open(path, "r", encoding="utf-8") as fh:
                 raw = fh.read()
         finally:
