@@ -197,7 +197,7 @@ function EditorBody({
         )}
 
         <div className="flex items-center justify-end gap-2">
-          <Button ghost size="sm" onClick={onClose} disabled={saving}>
+          <Button ghost size="sm" onClick={onClose} disabled={saving} aria-label="Cancel editing skill">
             Cancel
           </Button>
           <Button
