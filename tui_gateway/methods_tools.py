@@ -182,6 +182,8 @@ def _captured_exec(rid, cmd, timeout: int, *, on_result, timeout_err: tuple, fai
     """Run ``cmd`` captured (see ``_capture_run_kwargs``) and hand the CompletedProcess to
     ``on_result``; TimeoutExpired → ``timeout_err`` (code, message), other errors → ``fail_code``."""
     try:
+        if env is None:
+            env = _tools_mod("tools.environments.local").build_subprocess_env()
         return on_result(subprocess.run(cmd, cwd=os.getcwd(), shell=shell, env=env, **_capture_run_kwargs(timeout)))
     except subprocess.TimeoutExpired:
         return _err(rid, *timeout_err)
