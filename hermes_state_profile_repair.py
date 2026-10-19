@@ -142,13 +142,16 @@ class SessionProfileRepairMixin:
                 rows = conn.execute(
                     f"SELECT id, session_key FROM sessions WHERE id IN ({_session_ids_placeholders(chunk)})",
                     chunk).fetchall()
+                updates = []
                 for session_id, session_key in rows:
                     target = session_key_profile(session_key)
                     if target is None:
                         continue
-                    changed += conn.execute(
+                    updates.append((target, session_id, target))
+                if updates:
+                    changed += conn.executemany(
                         "UPDATE sessions SET profile_name = ? WHERE id = ? AND profile_name IS NOT ?",
-                        (target, session_id, target)).rowcount
+                        updates).rowcount
             return changed
         return self._execute_write(_do)
 
@@ -167,11 +170,14 @@ class SessionProfileRepairMixin:
                     "SELECT s.id, s.session_key, p.session_key FROM sessions s "
                     "JOIN sessions p ON p.id = s.parent_session_id "
                     f"WHERE s.id IN ({_session_ids_placeholders(chunk)})", chunk).fetchall()
+                updates = []
                 for session_id, key, parent_key in rows:
                     mine, theirs = session_key_profile(key), session_key_profile(parent_key)
                     if mine is not None and theirs is not None and mine != theirs:
-                        severed += conn.execute(
-                            "UPDATE sessions SET parent_session_id = NULL WHERE id = ?", (session_id,)).rowcount
+                        updates.append((session_id,))
+                if updates:
+                    severed += conn.executemany(
+                        "UPDATE sessions SET parent_session_id = NULL WHERE id = ?", updates).rowcount
             return severed
         return self._execute_write(_do)
 
@@ -271,9 +277,8 @@ class SessionProfileRepairMixin:
             return 0
 
         def _do(conn) -> int:
-            return sum(conn.execute(
-                "DELETE FROM gateway_routing WHERE scope = ? AND session_key = ?", (scope, key)).rowcount
-                for scope, key in wanted)
+            return conn.executemany(
+                "DELETE FROM gateway_routing WHERE scope = ? AND session_key = ?", wanted).rowcount
         return self._execute_write(_do)
 
     def insert_gateway_routing_rows_if_absent(self, rows: Iterable[Tuple[str, str, str, float]]) -> int:
@@ -284,9 +289,9 @@ class SessionProfileRepairMixin:
             return 0
 
         def _do(conn) -> int:
-            return sum(conn.execute(
+            return conn.executemany(
                 "INSERT OR IGNORE INTO gateway_routing (scope, session_key, entry_json, updated_at) "
-                "VALUES (?, ?, ?, ?)", row).rowcount for row in wanted)
+                "VALUES (?, ?, ?, ?)", wanted).rowcount
         return self._execute_write(_do)
 
     # ── telegram topic tables ─────────────────────────────────────────────────

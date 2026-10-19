@@ -1,0 +1,3 @@
+## 2026-10-19 - Use executemany for bulk SQLite operations
+**Learning:** In Python's sqlite3 module, using `executemany` with a list of tuples is significantly faster and more efficient than using a Python generator/list comprehension with `sum(conn.execute(...).rowcount for row in ...)` because it runs the entire batch in a single C-level loop instead of crossing the Python-C boundary repeatedly. This pattern can be found and optimized in bulk inserts/deletes like in `hermes_state_profile_repair.py`.
+**Action:** Always prefer `conn.executemany(query, list_of_params).rowcount` over `sum(conn.execute(query, params).rowcount for params in list_of_params)` when performing the same operation on multiple rows.
