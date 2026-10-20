@@ -117,6 +117,8 @@ export function AuthWidget({ className }: AuthWidgetProps) {
           "h-9 px-5 py-2 text-[0.65rem] text-muted-foreground/40",
           className,
         )}
+        role="status"
+        aria-label="Loading authentication status"
         aria-busy="true"
       >
         …
