@@ -1,0 +1,3 @@
+## 2026-10-20 - [Markdown rendering - Memoization]
+**Learning:** In `web/src/components/Markdown.tsx`, the `Markdown` component was a normal functional component, yet it receives relatively heavy computation via `parseBlocks` inside a `useMemo`. When its parent components (like the chat history or logs) re-render, this component could be re-rendered unnecessarily if its props (`content`, `highlightTerms`, `streaming`) haven't changed.
+**Action:** Wrapped the `Markdown` component in `React.memo` to prevent unnecessary re-renders when its props are unchanged. This is especially useful in chat interfaces where old messages don't change but the overall list re-renders frequently as new messages stream in.

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 
 /**
  * Lightweight markdown renderer for LLM output.
@@ -9,7 +9,7 @@ import { useMemo, type ReactNode } from "react";
  * appears to hug the final character instead of wrapping onto a new line
  * after a block element (paragraph/list/code/…).
  */
-export function Markdown({
+export const Markdown = memo(function Markdown({
   content,
   highlightTerms,
   streaming,
@@ -34,7 +34,7 @@ export function Markdown({
       {blocks.length === 0 && caret}
     </div>
   );
-}
+});
 
 function StreamingCaret() {
   return (
