@@ -87,7 +87,10 @@ def _delete_meta(conn, *keys: str) -> None:
 
 
 def _is_cjk(cp: int) -> bool:
-    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+    for lo, hi in _CJK_RANGES:
+        if lo <= cp <= hi:
+            return True
+    return False
 
 
 def _non_operator_tokens(raw_query: str) -> List[str]:
@@ -828,7 +831,10 @@ class SessionSearchMixin:
 
     @staticmethod
     def _contains_cjk(text: str) -> bool:
-        return any(_is_cjk(ord(ch)) for ch in text)
+        for ch in text:
+            if _is_cjk(ord(ch)):
+                return True
+        return False
 
     @staticmethod
     def _count_cjk(text: str) -> int:
